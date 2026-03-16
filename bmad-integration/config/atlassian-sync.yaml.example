@@ -1,0 +1,15 @@
+# For non-BMAD projects — place in project root as atlassian-sync.yaml
+# Credentials still come from .env file
+
+jira:
+  base_url: "https://your-domain.atlassian.net"
+  project_key: "PROJ"
+  board_id: 1
+
+confluence:
+  base_url: "https://your-domain.atlassian.net/wiki"
+  space_key: "PROJ"
+
+sync:
+  enabled: true
+  conflict_strategy: merge  # merge | local-wins | remote-wins | ask
