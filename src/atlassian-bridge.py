@@ -27,13 +27,6 @@ def handle(cmd: dict) -> object:
     if action == 'jira_get_issue':
         return ac.jira_get_issue(cmd['key'])
 
-    elif action == 'jira_create_issue':
-        return ac.jira_api('POST', '/issue', cmd['body'])
-
-    elif action == 'jira_update_issue':
-        ac.jira_api('PUT', f"/issue/{cmd['key']}", cmd['body'])
-        return {'success': True}
-
     elif action == 'jira_transitions':
         return ac.jira_get_transitions(cmd['key'])
 
@@ -52,14 +45,27 @@ def handle(cmd: dict) -> object:
     elif action == 'jira_get_project':
         return ac.jira_api('GET', f"/project/{cmd['project_key']}")
 
-    elif action == 'jira_create_sprint':
-        return ac.jira_api('POST', '/sprint', cmd['body'],
-                           base='agile')
+    elif action == 'jira_create_issue':
+        return ac.jira_create_issue(
+            cmd['project_key'], cmd['issue_type'], cmd['summary'],
+            cmd.get('description'), cmd.get('epic_key'), cmd.get('labels')
+        )
 
-    elif action == 'jira_move_issues_to_sprint':
-        ac.jira_api('POST', f"/sprint/{cmd['sprint_id']}/issue",
-                    {'issues': cmd['issue_keys']},
-                    base='agile')
+    elif action == 'jira_update_issue':
+        ac.jira_update_issue(cmd['key'], cmd['fields'])
+        return {'success': True}
+
+    elif action == 'jira_get_boards':
+        return {'boards': ac.jira_get_boards(cmd.get('project_key'))}
+
+    elif action == 'jira_create_sprint':
+        return ac.jira_create_sprint(
+            cmd['board_id'], cmd['name'],
+            cmd.get('goal'), cmd.get('start_date'), cmd.get('end_date')
+        )
+
+    elif action == 'jira_move_to_sprint':
+        ac.jira_move_to_sprint(cmd['sprint_id'], cmd['issue_keys'])
         return {'success': True}
 
     elif action == 'confluence_get_page':
