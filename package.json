@@ -1,0 +1,21 @@
+{
+  "name": "bmad-atlassian-sync",
+  "version": "0.1.0",
+  "description": "Bidirectional sync between BMAD .md artifacts and Jira/Confluence Cloud",
+  "type": "module",
+  "bin": {
+    "atlassian-sync": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0",
+    "@types/node": "^22.0.0"
+  }
+}
