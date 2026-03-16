@@ -263,20 +263,16 @@ async function main(): Promise<void> {
   }
 
   // Build clients + engine
+  // Credentials are handled by the Python bridge; only pass structural config here.
   const jiraClient = new JiraClient({
     baseUrl: config.jira.baseUrl,
-    email: config.jira.email,
-    apiToken: config.jira.apiToken,
     projectKey: config.jira.projectKey,
     boardId: config.jira.boardId,
   });
 
   const confluenceClient = new ConfluenceClient({
     baseUrl: config.confluence.baseUrl,
-    email: config.jira.email,
-    apiToken: config.jira.apiToken,
     spaceKey: config.confluence.spaceKey,
-    spaceId: config.confluence.spaceId,
   });
 
   const engine = new SyncEngine({

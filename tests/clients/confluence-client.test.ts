@@ -2,51 +2,29 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ConfluenceClient } from '../../src/clients/confluence-client.js';
 
 // ---------------------------------------------------------------------------
-// Mock global fetch
+// Mock the bridge module so no actual Python subprocess is spawned
 // ---------------------------------------------------------------------------
 
-const mockFetch = vi.fn();
-vi.stubGlobal('fetch', mockFetch);
+vi.mock('../../src/clients/atlassian-bridge.js', () => ({
+  callBridge: vi.fn(),
+}));
+
+import { callBridge } from '../../src/clients/atlassian-bridge.js';
+const mockBridge = vi.mocked(callBridge);
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Config and shared fixtures
 // ---------------------------------------------------------------------------
-
-function makeOkResponse(body: unknown, status = 200): Response {
-  return {
-    ok: true,
-    status,
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  } as unknown as Response;
-}
-
-function makeErrorResponse(status: number, body: unknown): Response {
-  return {
-    ok: false,
-    status,
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  } as unknown as Response;
-}
 
 const DEFAULT_CONFIG = {
   baseUrl: 'https://test.atlassian.net/wiki',
-  email: 'test@example.com',
-  apiToken: 'test-token',
   spaceKey: 'TEST',
-};
-
-const SPACE_RESPONSE = {
-  results: [{ id: 'space-123', key: 'TEST' }],
 };
 
 const PAGE_RESPONSE = {
   id: 'page-001',
   title: 'My Page',
   status: 'current',
-  spaceId: 'space-123',
-  parentId: undefined,
   version: { number: 1, createdAt: '2024-01-01T00:00:00.000Z' },
   body: { storage: { value: '<p>Hello</p>' } },
   _links: { webui: '/wiki/spaces/TEST/pages/page-001' },
@@ -61,61 +39,7 @@ describe('ConfluenceClient', () => {
 
   beforeEach(() => {
     client = new ConfluenceClient(DEFAULT_CONFIG);
-    mockFetch.mockReset();
-  });
-
-  // -------------------------------------------------------------------------
-  // Space resolution
-  // -------------------------------------------------------------------------
-
-  describe('space resolution', () => {
-    it('resolves spaceId from spaceKey on first API call', async () => {
-      // First call: resolve space, second call: createPage
-      mockFetch
-        .mockResolvedValueOnce(makeOkResponse(SPACE_RESPONSE))
-        .mockResolvedValueOnce(makeOkResponse(PAGE_RESPONSE, 200));
-
-      await client.createPage({ title: 'Test Page', body: '<p>body</p>' });
-
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-
-      // First call should be the spaces lookup
-      const [spaceUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(spaceUrl).toContain('/api/v2/spaces');
-      expect(spaceUrl).toContain('keys=TEST');
-    });
-
-    it('caches spaceId and does not fetch it again on second call', async () => {
-      // Calls: space resolution + createPage + createPage (no second space lookup)
-      mockFetch
-        .mockResolvedValueOnce(makeOkResponse(SPACE_RESPONSE))
-        .mockResolvedValueOnce(makeOkResponse(PAGE_RESPONSE, 200))
-        .mockResolvedValueOnce(makeOkResponse({ ...PAGE_RESPONSE, id: 'page-002', title: 'Second' }, 200));
-
-      await client.createPage({ title: 'First', body: '<p>first</p>' });
-      await client.createPage({ title: 'Second', body: '<p>second</p>' });
-
-      // Total calls: 1 space + 2 createPage = 3
-      expect(mockFetch).toHaveBeenCalledTimes(3);
-    });
-
-    it('uses pre-configured spaceId without fetching spaces', async () => {
-      const clientWithSpaceId = new ConfluenceClient({
-        ...DEFAULT_CONFIG,
-        spaceId: 'pre-configured-space',
-      });
-
-      mockFetch.mockResolvedValueOnce(makeOkResponse(PAGE_RESPONSE, 200));
-
-      await clientWithSpaceId.createPage({ title: 'Test', body: '<p>x</p>' });
-
-      // Only 1 call: createPage (no space resolution needed)
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-
-      const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-      const body = JSON.parse(options.body as string) as { spaceId: string };
-      expect(body.spaceId).toBe('pre-configured-space');
-    });
+    mockBridge.mockReset();
   });
 
   // -------------------------------------------------------------------------
@@ -123,10 +47,8 @@ describe('ConfluenceClient', () => {
   // -------------------------------------------------------------------------
 
   describe('createPage', () => {
-    it('sends correct body structure with storage representation', async () => {
-      mockFetch
-        .mockResolvedValueOnce(makeOkResponse(SPACE_RESPONSE))
-        .mockResolvedValueOnce(makeOkResponse(PAGE_RESPONSE, 200));
+    it('calls bridge with confluence_create_page and returns page', async () => {
+      mockBridge.mockReturnValueOnce({ page_id: 'page-001', page_url: '/wiki/spaces/TEST/pages/page-001' });
 
       const result = await client.createPage({
         title: 'My New Page',
@@ -134,31 +56,20 @@ describe('ConfluenceClient', () => {
       });
 
       expect(result.id).toBe('page-001');
-      expect(result.title).toBe('My Page');
+      expect(result.title).toBe('My New Page');
+      expect(result.status).toBe('current');
 
-      const [url, options] = mockFetch.mock.calls[1] as [string, RequestInit];
-      expect(url).toContain('/api/v2/pages');
-      expect(options.method).toBe('POST');
-
-      const reqBody = JSON.parse(options.body as string) as {
-        spaceId: string;
-        status: string;
-        title: string;
-        body: { representation: string; value: string };
-        parentId?: string;
-      };
-      expect(reqBody.spaceId).toBe('space-123');
-      expect(reqBody.status).toBe('current');
-      expect(reqBody.title).toBe('My New Page');
-      expect(reqBody.body.representation).toBe('storage');
-      expect(reqBody.body.value).toBe('<p>Hello World</p>');
-      expect(reqBody.parentId).toBeUndefined();
+      expect(mockBridge).toHaveBeenCalledOnce();
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('confluence_create_page');
+      expect(cmd['space_key']).toBe('TEST');
+      expect(cmd['title']).toBe('My New Page');
+      expect(cmd['body_xhtml']).toBe('<p>Hello World</p>');
+      expect(cmd['parent_id']).toBeNull();
     });
 
-    it('includes parentId when provided', async () => {
-      mockFetch
-        .mockResolvedValueOnce(makeOkResponse(SPACE_RESPONSE))
-        .mockResolvedValueOnce(makeOkResponse(PAGE_RESPONSE, 200));
+    it('passes parentId when provided', async () => {
+      mockBridge.mockReturnValueOnce({ page_id: 'page-child', page_url: '/wiki/spaces/TEST/pages/page-child' });
 
       await client.createPage({
         title: 'Child Page',
@@ -166,9 +77,8 @@ describe('ConfluenceClient', () => {
         parentId: 'parent-999',
       });
 
-      const [, options] = mockFetch.mock.calls[1] as [string, RequestInit];
-      const reqBody = JSON.parse(options.body as string) as { parentId?: string };
-      expect(reqBody.parentId).toBe('parent-999');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['parent_id']).toBe('parent-999');
     });
   });
 
@@ -177,71 +87,41 @@ describe('ConfluenceClient', () => {
   // -------------------------------------------------------------------------
 
   describe('updatePage', () => {
-    it('GETs current version first, then PUTs with version+1', async () => {
-      const currentPage = {
-        ...PAGE_RESPONSE,
-        id: 'page-001',
-        version: { number: 3 },
-      };
+    it('fetches current version first then calls confluence_update_page with version+1', async () => {
+      const currentPage = { ...PAGE_RESPONSE, id: 'page-001', version: { number: 3 } };
 
-      const updatedPage = {
-        ...PAGE_RESPONSE,
-        id: 'page-001',
-        version: { number: 4 },
-        title: 'Updated Title',
-      };
-
-      // Calls: getPage (GET), updatePage (PUT)
-      mockFetch
-        .mockResolvedValueOnce(makeOkResponse(currentPage))
-        .mockResolvedValueOnce(makeOkResponse(updatedPage));
+      // First bridge call: getPage (confluence_get_page)
+      mockBridge.mockReturnValueOnce(currentPage);
+      // Second bridge call: updatePage (confluence_update_page)
+      mockBridge.mockReturnValueOnce({ page_id: 'page-001', page_url: '/wiki/spaces/TEST/pages/page-001' });
 
       const result = await client.updatePage('page-001', {
         title: 'Updated Title',
         body: '<p>Updated</p>',
-        message: 'Minor edit',
       });
 
       expect(result.title).toBe('Updated Title');
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(result.version.number).toBe(4); // 3 + 1
+      expect(mockBridge).toHaveBeenCalledTimes(2);
 
-      // First call: GET current page
-      const [getUrl, getOptions] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(getUrl).toContain('/api/v2/pages/page-001');
-      expect(getOptions?.method ?? 'GET').toBe('GET');
-
-      // Second call: PUT with version + 1
-      const [putUrl, putOptions] = mockFetch.mock.calls[1] as [string, RequestInit];
-      expect(putUrl).toContain('/api/v2/pages/page-001');
-      expect(putOptions.method).toBe('PUT');
-
-      const putBody = JSON.parse(putOptions.body as string) as {
-        version: { number: number; message?: string };
-        title: string;
-        body: { representation: string; value: string };
-        status: string;
-      };
-      expect(putBody.version.number).toBe(4); // 3 + 1
-      expect(putBody.version.message).toBe('Minor edit');
-      expect(putBody.title).toBe('Updated Title');
-      expect(putBody.body.representation).toBe('storage');
-      expect(putBody.body.value).toBe('<p>Updated</p>');
-      expect(putBody.status).toBe('current');
+      const updateCmd = mockBridge.mock.calls[1][0] as Record<string, unknown>;
+      expect(updateCmd['action']).toBe('confluence_update_page');
+      expect(updateCmd['page_id']).toBe('page-001');
+      expect(updateCmd['version']).toBe(3);
+      expect(updateCmd['title']).toBe('Updated Title');
+      expect(updateCmd['body_xhtml']).toBe('<p>Updated</p>');
     });
 
     it('preserves existing title when not provided in update', async () => {
       const currentPage = { ...PAGE_RESPONSE, title: 'Existing Title', version: { number: 1 } };
-      const updatedPage = { ...PAGE_RESPONSE, title: 'Existing Title', version: { number: 2 } };
 
-      mockFetch
-        .mockResolvedValueOnce(makeOkResponse(currentPage))
-        .mockResolvedValueOnce(makeOkResponse(updatedPage));
+      mockBridge.mockReturnValueOnce(currentPage);
+      mockBridge.mockReturnValueOnce({ page_id: 'page-001', page_url: '' });
 
       await client.updatePage('page-001', { body: '<p>New body</p>' });
 
-      const [, putOptions] = mockFetch.mock.calls[1] as [string, RequestInit];
-      const putBody = JSON.parse(putOptions.body as string) as { title: string };
-      expect(putBody.title).toBe('Existing Title');
+      const updateCmd = mockBridge.mock.calls[1][0] as Record<string, unknown>;
+      expect(updateCmd['title']).toBe('Existing Title');
     });
   });
 
@@ -250,8 +130,8 @@ describe('ConfluenceClient', () => {
   // -------------------------------------------------------------------------
 
   describe('getPage', () => {
-    it('fetches a page by ID', async () => {
-      mockFetch.mockResolvedValueOnce(makeOkResponse(PAGE_RESPONSE));
+    it('calls bridge with confluence_get_page and returns page', async () => {
+      mockBridge.mockReturnValueOnce(PAGE_RESPONSE);
 
       const result = await client.getPage('page-001');
 
@@ -259,26 +139,33 @@ describe('ConfluenceClient', () => {
       expect(result.title).toBe('My Page');
       expect(result.version.number).toBe(1);
 
-      const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/api/v2/pages/page-001');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('confluence_get_page');
+      expect(cmd['page_id']).toBe('page-001');
+      expect(cmd['expand']).toContain('body.storage');
     });
 
-    it('includes body-format query param when bodyFormat is specified', async () => {
-      mockFetch.mockResolvedValueOnce(makeOkResponse(PAGE_RESPONSE));
+    it('uses body.view expand when bodyFormat is view', async () => {
+      const viewPage = {
+        ...PAGE_RESPONSE,
+        body: { view: { value: '<p>rendered</p>' } },
+      };
+      mockBridge.mockReturnValueOnce(viewPage);
+
+      const result = await client.getPage('page-001', 'view');
+
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['expand']).toContain('body.view');
+      expect(result.body?.storage?.value).toBe('<p>rendered</p>');
+    });
+
+    it('uses body.storage expand when bodyFormat is storage', async () => {
+      mockBridge.mockReturnValueOnce(PAGE_RESPONSE);
 
       await client.getPage('page-001', 'storage');
 
-      const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('body-format=storage');
-    });
-
-    it('fetches page with view format', async () => {
-      mockFetch.mockResolvedValueOnce(makeOkResponse(PAGE_RESPONSE));
-
-      await client.getPage('page-001', 'view');
-
-      const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('body-format=view');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['expand']).toContain('body.storage');
     });
   });
 
@@ -287,8 +174,8 @@ describe('ConfluenceClient', () => {
   // -------------------------------------------------------------------------
 
   describe('search', () => {
-    it('searches with CQL and returns results', async () => {
-      const searchResponse = {
+    it('calls bridge with confluence_search and returns normalized results', async () => {
+      const bridgeResponse = {
         results: [
           { content: { id: 'page-001', title: 'My Page' } },
           { content: { id: 'page-002', title: 'Another Page' } },
@@ -296,7 +183,7 @@ describe('ConfluenceClient', () => {
         size: 2,
       };
 
-      mockFetch.mockResolvedValueOnce(makeOkResponse(searchResponse));
+      mockBridge.mockReturnValueOnce(bridgeResponse);
 
       const result = await client.search('space = TEST AND title = "My Page"');
 
@@ -305,19 +192,18 @@ describe('ConfluenceClient', () => {
       expect(result.results[0].content.id).toBe('page-001');
       expect(result.results[0].content.title).toBe('My Page');
 
-      const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/rest/api/search');
-      expect(url).toContain('cql=');
-      expect(decodeURIComponent(url)).toContain('space = TEST AND title = "My Page"');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('confluence_search');
+      expect(cmd['cql']).toBe('space = TEST AND title = "My Page"');
     });
 
-    it('includes limit parameter when provided', async () => {
-      mockFetch.mockResolvedValueOnce(makeOkResponse({ results: [], size: 0 }));
+    it('passes limit to bridge', async () => {
+      mockBridge.mockReturnValueOnce({ results: [], size: 0 });
 
       await client.search('space = TEST', 25);
 
-      const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('limit=25');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['limit']).toBe(25);
     });
   });
 
@@ -327,25 +213,23 @@ describe('ConfluenceClient', () => {
 
   describe('findPageByTitle', () => {
     it('returns the first matching page when found', async () => {
-      const searchResponse = {
+      mockBridge.mockReturnValueOnce({
         results: [{ content: { id: 'page-001', title: 'Sprint Planning' } }],
         size: 1,
-      };
-
-      mockFetch.mockResolvedValueOnce(makeOkResponse(searchResponse));
+      });
 
       const result = await client.findPageByTitle('Sprint Planning');
 
       expect(result).not.toBeNull();
       expect(result!.id).toBe('page-001');
 
-      const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(decodeURIComponent(url)).toContain('Sprint Planning');
-      expect(decodeURIComponent(url)).toContain('TEST');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['cql']).toContain('Sprint Planning');
+      expect(cmd['cql']).toContain('TEST');
     });
 
     it('returns null when no pages match', async () => {
-      mockFetch.mockResolvedValueOnce(makeOkResponse({ results: [], size: 0 }));
+      mockBridge.mockReturnValueOnce({ results: [], size: 0 });
 
       const result = await client.findPageByTitle('Nonexistent Page');
 
@@ -358,34 +242,30 @@ describe('ConfluenceClient', () => {
   // -------------------------------------------------------------------------
 
   describe('error handling', () => {
-    it('throws descriptive error on 404 response', async () => {
-      mockFetch.mockResolvedValueOnce(makeErrorResponse(404, { message: 'Page not found' }));
+    it('propagates bridge errors from getPage', async () => {
+      mockBridge.mockImplementationOnce(() => {
+        throw new Error('Atlassian bridge error [AtlassianAPIError]: HTTP 404 Not Found');
+      });
 
       await expect(client.getPage('bad-id')).rejects.toThrow('404');
     });
 
-    it('throws on 401 unauthorized response', async () => {
-      mockFetch.mockResolvedValueOnce(makeErrorResponse(401, { message: 'Unauthorized' }));
+    it('propagates 401 errors', async () => {
+      mockBridge.mockImplementationOnce(() => {
+        throw new Error('Atlassian bridge error [AtlassianAPIError]: HTTP 401 Unauthorized');
+      });
 
       await expect(client.getPage('page-001')).rejects.toThrow('401');
     });
 
-    it('throws on 403 forbidden response during createPage', async () => {
-      mockFetch
-        .mockResolvedValueOnce(makeOkResponse(SPACE_RESPONSE))
-        .mockResolvedValueOnce(makeErrorResponse(403, { message: 'Forbidden' }));
+    it('propagates 403 errors from createPage', async () => {
+      mockBridge.mockImplementationOnce(() => {
+        throw new Error('Atlassian bridge error [AtlassianAPIError]: HTTP 403 Forbidden');
+      });
 
       await expect(
         client.createPage({ title: 'Forbidden', body: '<p>x</p>' }),
       ).rejects.toThrow('403');
-    });
-
-    it('throws when space is not found during resolution', async () => {
-      mockFetch.mockResolvedValueOnce(makeOkResponse({ results: [], size: 0 }));
-
-      await expect(
-        client.createPage({ title: 'Test', body: '<p>x</p>' }),
-      ).rejects.toThrow(/space/i);
     });
   });
 });

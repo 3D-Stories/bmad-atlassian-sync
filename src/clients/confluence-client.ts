@@ -1,11 +1,9 @@
 /**
- * Confluence Cloud REST API client.
- * Page CRUD uses API v2 (/api/v2/pages).
- * CQL search uses API v1 (/rest/api/search).
- * Space resolution uses API v2 (/api/v2/spaces).
+ * Confluence client — delegates all API calls to the Python atlassian-bridge.py script.
+ * The bridge uses v1 API for writes (v2 POST/PUT fail with current token scopes).
  */
 
-import { getAuthHeader } from '../config.js';
+import { callBridge } from './atlassian-bridge.js';
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -28,10 +26,12 @@ export interface ConfluenceSearchResult {
 }
 
 export interface ConfluenceClientConfig {
-  baseUrl: string;
-  email: string;
-  apiToken: string;
+  baseUrl: string;   // Site URL for constructing page links
   spaceKey: string;
+  // email / apiToken / cloudId are now handled by the Python bridge
+  email?: string;
+  apiToken?: string;
+  cloudId?: string;
   spaceId?: string;
 }
 
@@ -40,92 +40,10 @@ export interface ConfluenceClientConfig {
 // ---------------------------------------------------------------------------
 
 export class ConfluenceClient {
-  private readonly baseUrl: string;
-  private readonly authHeader: string;
   private readonly spaceKey: string;
 
-  /** Cached spaceId — may be pre-configured or resolved lazily. */
-  private cachedSpaceId: string | null;
-
   constructor(config: ConfluenceClientConfig) {
-    // Strip trailing slash for consistency
-    this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    this.authHeader = getAuthHeader(config.email, config.apiToken);
     this.spaceKey = config.spaceKey;
-    // If spaceId is provided at construction time, skip the lookup entirely
-    this.cachedSpaceId = config.spaceId ?? null;
-  }
-
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
-
-  private get commonHeaders(): Record<string, string> {
-    return {
-      Authorization: this.authHeader,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    };
-  }
-
-  private v2Url(path: string): string {
-    return `${this.baseUrl}/api/v2/${path.replace(/^\//, '')}`;
-  }
-
-  private v1Url(path: string): string {
-    return `${this.baseUrl}/rest/api/${path.replace(/^\//, '')}`;
-  }
-
-  /**
-   * Makes a fetch request and throws a descriptive error on non-ok responses.
-   */
-  private async request<T>(url: string, options: RequestInit = {}): Promise<T> {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        ...this.commonHeaders,
-        ...(options.headers as Record<string, string> | undefined),
-      },
-    });
-
-    if (!response.ok) {
-      let bodyText: string;
-      try {
-        bodyText = await response.text();
-      } catch {
-        bodyText = '<unable to read response body>';
-      }
-      throw new Error(`Confluence API error ${response.status}: ${bodyText}`);
-    }
-
-    if (response.status === 204) {
-      return {} as T;
-    }
-
-    return response.json() as Promise<T>;
-  }
-
-  /**
-   * Resolves the numeric/string spaceId for this client's spaceKey.
-   * Result is cached so only one API call is ever made per client instance.
-   */
-  private async resolveSpaceId(): Promise<string> {
-    if (this.cachedSpaceId !== null) {
-      return this.cachedSpaceId;
-    }
-
-    const url = this.v2Url(`spaces?keys=${encodeURIComponent(this.spaceKey)}`);
-    const data = await this.request<{ results: { id: string; key: string }[] }>(url);
-
-    if (!data.results || data.results.length === 0) {
-      throw new Error(
-        `Confluence space not found for key "${this.spaceKey}". ` +
-          'Check that the space exists and the credentials have access.',
-      );
-    }
-
-    this.cachedSpaceId = data.results[0].id;
-    return this.cachedSpaceId;
   }
 
   // -------------------------------------------------------------------------
@@ -134,74 +52,95 @@ export class ConfluenceClient {
 
   /**
    * Creates a new page in the configured Confluence space.
+   * Delegates to the Python bridge which uses v1 API for compatibility.
    */
   async createPage(params: {
     title: string;
     body: string;
     parentId?: string;
   }): Promise<ConfluencePage> {
-    const spaceId = await this.resolveSpaceId();
-
-    const reqBody: Record<string, unknown> = {
-      spaceId,
-      status: 'current',
+    const result = callBridge({
+      action: 'confluence_create_page',
+      space_key: this.spaceKey,
       title: params.title,
-      body: {
-        representation: 'storage',
-        value: params.body,
-      },
+      body_xhtml: params.body,
+      parent_id: params.parentId ?? null,
+    }) as { page_id: string; page_url: string };
+
+    return {
+      id: result.page_id,
+      title: params.title,
+      status: 'current',
+      version: { number: 1 },
+      _links: { webui: result.page_url },
     };
-
-    if (params.parentId !== undefined) {
-      reqBody['parentId'] = params.parentId;
-    }
-
-    return this.request<ConfluencePage>(this.v2Url('pages'), {
-      method: 'POST',
-      body: JSON.stringify(reqBody),
-    });
   }
 
   /**
    * Updates an existing Confluence page.
-   * Automatically fetches the current page version and increments it.
+   * Fetches the current page version first, then increments it.
    */
   async updatePage(
     pageId: string,
     params: { title?: string; body?: string; message?: string },
   ): Promise<ConfluencePage> {
-    // Must GET current page to obtain the current version number
+    // Get current page to obtain version number and title
     const current = await this.getPage(pageId);
+    const newTitle = params.title ?? current.title;
+    const newBody = params.body ?? current.body?.storage?.value ?? '';
 
-    const reqBody: Record<string, unknown> = {
+    const result = callBridge({
+      action: 'confluence_update_page',
+      space_key: this.spaceKey,
+      page_id: pageId,
+      title: newTitle,
+      body_xhtml: newBody,
+      version: current.version.number,
+    }) as { page_id: string; page_url: string };
+
+    return {
+      id: result.page_id,
+      title: newTitle,
       status: 'current',
-      title: params.title ?? current.title,
-      version: {
-        number: current.version.number + 1,
-        ...(params.message !== undefined ? { message: params.message } : {}),
-      },
-      body: {
-        representation: 'storage',
-        value: params.body ?? current.body?.storage?.value ?? '',
-      },
+      version: { number: current.version.number + 1 },
+      body: { storage: { value: newBody } },
+      _links: { webui: result.page_url },
     };
-
-    return this.request<ConfluencePage>(this.v2Url(`pages/${pageId}`), {
-      method: 'PUT',
-      body: JSON.stringify(reqBody),
-    });
   }
 
   /**
-   * Retrieves a Confluence page by its ID.
-   * Optionally requests the body in a specific format.
+   * Retrieves a Confluence page by its ID using v1 API via bridge.
    */
   async getPage(pageId: string, bodyFormat?: 'storage' | 'view'): Promise<ConfluencePage> {
-    let url = this.v2Url(`pages/${pageId}`);
-    if (bodyFormat !== undefined) {
-      url += `?body-format=${encodeURIComponent(bodyFormat)}`;
-    }
-    return this.request<ConfluencePage>(url);
+    const expand = bodyFormat === 'view'
+      ? 'space,title,version,body.view'
+      : 'space,title,version,body.storage';
+
+    const v1Page = callBridge({
+      action: 'confluence_get_page',
+      page_id: pageId,
+      expand,
+    }) as {
+      id: string;
+      title: string;
+      status: string;
+      version: { number: number };
+      body?: { storage?: { value: string }; view?: { value: string } };
+      _links?: { webui?: string };
+    };
+
+    const body = bodyFormat === 'view'
+      ? { storage: { value: v1Page.body?.view?.value ?? '' } }
+      : v1Page.body;
+
+    return {
+      id: v1Page.id,
+      title: v1Page.title,
+      status: v1Page.status,
+      version: v1Page.version,
+      body,
+      _links: v1Page._links,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -210,17 +149,23 @@ export class ConfluenceClient {
 
   /**
    * Searches Confluence using CQL (Confluence Query Language).
-   * Uses the v1 search API endpoint.
    */
-  async search(
-    cql: string,
-    limit?: number,
-  ): Promise<ConfluenceSearchResult> {
-    let url = `${this.v1Url('search')}?cql=${encodeURIComponent(cql)}`;
-    if (limit !== undefined) {
-      url += `&limit=${limit}`;
-    }
-    return this.request<ConfluenceSearchResult>(url);
+  async search(cql: string, limit?: number): Promise<ConfluenceSearchResult> {
+    const result = callBridge({
+      action: 'confluence_search',
+      cql,
+      limit: limit ?? 25,
+    }) as { results: { content?: { id: string; title: string }; title?: string; id?: string }[]; size?: number };
+
+    // Normalize v1 search response shape
+    const normalized = (result.results ?? []).map((r) => ({
+      content: r.content ?? { id: r.id ?? '', title: r.title ?? '' },
+    }));
+
+    return {
+      results: normalized,
+      size: result.size ?? normalized.length,
+    };
   }
 
   /**

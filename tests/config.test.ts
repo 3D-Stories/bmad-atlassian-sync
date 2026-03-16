@@ -15,6 +15,14 @@ const REQUIRED_ENV: Record<string, string> = {
   CONFLUENCE_SPACE_KEY: 'TS',
 };
 
+// Additional env keys introduced by the bridge refactor (also clear these in beforeEach)
+const BRIDGE_ENV_KEYS = [
+  'ATLASSIAN_SA_EMAIL',
+  'ATLASSIAN_API_TOKEN',
+  'ATLASSIAN_CLOUD_ID',
+  'ATLASSIAN_SITE_URL',
+];
+
 describe('config', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
@@ -22,6 +30,9 @@ describe('config', () => {
     // Save and clear relevant env vars
     originalEnv = { ...process.env };
     for (const key of Object.keys(REQUIRED_ENV)) {
+      delete process.env[key];
+    }
+    for (const key of BRIDGE_ENV_KEYS) {
       delete process.env[key];
     }
     delete process.env['JIRA_BOARD_ID'];

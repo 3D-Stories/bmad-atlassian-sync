@@ -6,11 +6,13 @@ export interface AtlassianSyncConfig {
     email: string;
     apiToken: string;
     projectKey: string;
+    cloudId: string;  // Atlassian Cloud ID (read by Python bridge from env; kept here for reference)
     boardId?: number;
   };
   confluence: {
     baseUrl: string;
     spaceKey: string;
+    cloudId: string;
     spaceId?: string;
   };
   sync: {
@@ -179,6 +181,7 @@ function loadBmadConfig(bmadConfigPath: string): Partial<AtlassianSyncConfig> | 
       email: typeof j['email'] === 'string' ? j['email'] : '',
       apiToken: typeof j['apiToken'] === 'string' ? j['apiToken'] : '',
       projectKey: typeof j['projectKey'] === 'string' ? j['projectKey'] : '',
+      cloudId: typeof j['cloudId'] === 'string' ? j['cloudId'] : '',
       ...(j['boardId'] !== undefined ? { boardId: Number(j['boardId']) } : {}),
     };
   }
@@ -188,6 +191,7 @@ function loadBmadConfig(bmadConfigPath: string): Partial<AtlassianSyncConfig> | 
     partial.confluence = {
       baseUrl: typeof c['baseUrl'] === 'string' ? c['baseUrl'] : '',
       spaceKey: typeof c['spaceKey'] === 'string' ? c['spaceKey'] : '',
+      cloudId: typeof c['cloudId'] === 'string' ? c['cloudId'] : '',
       ...(c['spaceId'] !== undefined ? { spaceId: String(c['spaceId']) } : {}),
     };
   }
@@ -228,20 +232,28 @@ export function loadConfig(options: LoadConfigOptions = {}): AtlassianSyncConfig
   // 2. Load BMAD config overrides if specified
   const bmadOverrides = bmadConfigPath ? loadBmadConfig(bmadConfigPath) : null;
 
-  // 3. Helper to get a required env var, with BMAD override taking precedence
-  function requireEnv(key: string, bmadValue?: string): string {
+  // 3. Helper to get a required env var, with BMAD override taking precedence.
+  //    Accepts multiple env var names to try in order (supports both naming conventions).
+  function requireEnv(keys: string | string[], bmadValue?: string): string {
     // BMAD config value takes precedence over env var, but only if non-empty
     if (bmadValue && bmadValue.length > 0) return bmadValue;
-    const val = process.env[key];
-    if (!val) {
-      throw new Error(`Missing required environment variable: ${key}`);
+    const keyList = Array.isArray(keys) ? keys : [keys];
+    for (const key of keyList) {
+      const val = process.env[key];
+      if (val) return val;
     }
-    return val;
+    // Throw mentioning the primary key name
+    throw new Error(`Missing required environment variable: ${keyList[0]}`);
   }
 
-  function optionalEnv(key: string, bmadValue?: string): string | undefined {
+  function optionalEnv(keys: string | string[], bmadValue?: string): string | undefined {
     if (bmadValue && bmadValue.length > 0) return bmadValue;
-    return process.env[key];
+    const keyList = Array.isArray(keys) ? keys : [keys];
+    for (const key of keyList) {
+      const val = process.env[key];
+      if (val) return val;
+    }
+    return undefined;
   }
 
   const jiraOverride = bmadOverrides?.jira;
@@ -254,18 +266,26 @@ export function loadConfig(options: LoadConfigOptions = {}): AtlassianSyncConfig
     jiraOverride?.boardId !== undefined ? String(jiraOverride.boardId) : undefined,
   );
 
+  // cloudId is read by the Python bridge from its own .env; keep it optional here
+  // so that configs without ATLASSIAN_CLOUD_ID still load (bridge handles it).
+  const cloudId =
+    optionalEnv(['ATLASSIAN_CLOUD_ID'], jiraOverride?.cloudId) ?? '';
+
   const jira: AtlassianSyncConfig['jira'] = {
-    baseUrl: requireEnv('JIRA_BASE_URL', jiraOverride?.baseUrl),
-    email: requireEnv('JIRA_EMAIL', jiraOverride?.email),
-    apiToken: requireEnv('JIRA_API_TOKEN', jiraOverride?.apiToken),
+    baseUrl: requireEnv(['JIRA_BASE_URL', 'ATLASSIAN_SITE_URL'], jiraOverride?.baseUrl),
+    email: requireEnv(['JIRA_EMAIL', 'ATLASSIAN_SA_EMAIL'], jiraOverride?.email),
+    apiToken: requireEnv(['JIRA_API_TOKEN', 'ATLASSIAN_API_TOKEN'], jiraOverride?.apiToken),
     projectKey: requireEnv('JIRA_PROJECT_KEY', jiraOverride?.projectKey),
+    cloudId,
     ...(boardIdStr !== undefined ? { boardId: parseInt(boardIdStr, 10) } : {}),
   };
 
   const spaceId = optionalEnv('CONFLUENCE_SPACE_ID', confOverride?.spaceId);
+  const confluenceBaseUrl = optionalEnv(['CONFLUENCE_BASE_URL', 'ATLASSIAN_SITE_URL'], confOverride?.baseUrl);
   const confluence: AtlassianSyncConfig['confluence'] = {
-    baseUrl: requireEnv('CONFLUENCE_BASE_URL', confOverride?.baseUrl),
+    baseUrl: confluenceBaseUrl ?? jira.baseUrl,
     spaceKey: requireEnv('CONFLUENCE_SPACE_KEY', confOverride?.spaceKey),
+    cloudId,
     ...(spaceId !== undefined ? { spaceId } : {}),
   };
 

@@ -2,38 +2,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { JiraClient } from '../../src/clients/jira-client.js';
 
 // ---------------------------------------------------------------------------
-// Mock global fetch
+// Mock the bridge module so no actual Python subprocess is spawned
 // ---------------------------------------------------------------------------
 
-const mockFetch = vi.fn();
-vi.stubGlobal('fetch', mockFetch);
+vi.mock('../../src/clients/atlassian-bridge.js', () => ({
+  callBridge: vi.fn(),
+}));
+
+import { callBridge } from '../../src/clients/atlassian-bridge.js';
+const mockBridge = vi.mocked(callBridge);
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Config and helpers
 // ---------------------------------------------------------------------------
-
-function makeOkResponse(body: unknown, status = 200): Response {
-  return {
-    ok: true,
-    status,
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  } as unknown as Response;
-}
-
-function makeErrorResponse(status: number, body: unknown): Response {
-  return {
-    ok: false,
-    status,
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  } as unknown as Response;
-}
 
 const DEFAULT_CONFIG = {
   baseUrl: 'https://test.atlassian.net',
-  email: 'test@example.com',
-  apiToken: 'test-token',
   projectKey: 'TEST',
   boardId: 42,
 };
@@ -47,7 +31,7 @@ describe('JiraClient', () => {
 
   beforeEach(() => {
     client = new JiraClient(DEFAULT_CONFIG);
-    mockFetch.mockReset();
+    mockBridge.mockReset();
   });
 
   // -------------------------------------------------------------------------
@@ -55,10 +39,8 @@ describe('JiraClient', () => {
   // -------------------------------------------------------------------------
 
   describe('createIssue', () => {
-    it('sends correct ADF body and returns key', async () => {
-      mockFetch.mockResolvedValueOnce(
-        makeOkResponse({ id: '10001', key: 'TEST-1', self: 'https://test.atlassian.net/rest/api/3/issue/10001' }, 201),
-      );
+    it('calls bridge with jira_create_issue and returns key', async () => {
+      mockBridge.mockReturnValueOnce({ id: '10001', key: 'TEST-1', self: '' });
 
       const result = await client.createIssue({
         type: 'Story',
@@ -69,33 +51,23 @@ describe('JiraClient', () => {
       expect(result.key).toBe('TEST-1');
       expect(result.id).toBe('10001');
 
-      // Verify fetch was called with correct URL
-      expect(mockFetch).toHaveBeenCalledOnce();
-      const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe('https://test.atlassian.net/rest/api/3/issue');
-      expect(options.method).toBe('POST');
+      expect(mockBridge).toHaveBeenCalledOnce();
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('jira_create_issue');
 
-      // Verify ADF body structure
-      const body = JSON.parse(options.body as string) as {
-        fields: {
-          summary: string;
-          issuetype: { name: string };
-          project: { key: string };
-          description: { version: number; type: string; content: unknown[] };
-        };
-      };
-      expect(body.fields.summary).toBe('My test story');
-      expect(body.fields.issuetype.name).toBe('Story');
-      expect(body.fields.project.key).toBe('TEST');
-      expect(body.fields.description.version).toBe(1);
-      expect(body.fields.description.type).toBe('doc');
-      expect(Array.isArray(body.fields.description.content)).toBe(true);
+      const fields = (cmd['body'] as { fields: Record<string, unknown> }).fields;
+      expect(fields['summary']).toBe('My test story');
+      expect((fields['issuetype'] as { name: string }).name).toBe('Story');
+      expect((fields['project'] as { key: string }).key).toBe('TEST');
+      // description should be ADF doc
+      const desc = fields['description'] as { version: number; type: string; content: unknown[] };
+      expect(desc.version).toBe(1);
+      expect(desc.type).toBe('doc');
+      expect(Array.isArray(desc.content)).toBe(true);
     });
 
     it('includes labels and priority when provided', async () => {
-      mockFetch.mockResolvedValueOnce(
-        makeOkResponse({ id: '10002', key: 'TEST-2', self: 'https://test.atlassian.net/rest/api/3/issue/10002' }, 201),
-      );
+      mockBridge.mockReturnValueOnce({ id: '10002', key: 'TEST-2', self: '' });
 
       await client.createIssue({
         type: 'Bug',
@@ -104,26 +76,20 @@ describe('JiraClient', () => {
         priority: 'High',
       });
 
-      const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-      const body = JSON.parse(options.body as string) as {
-        fields: { labels: string[]; priority: { name: string } };
-      };
-      expect(body.fields.labels).toEqual(['critical', 'backend']);
-      expect(body.fields.priority).toEqual({ name: 'High' });
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      const fields = (cmd['body'] as { fields: Record<string, unknown> }).fields;
+      expect(fields['labels']).toEqual(['critical', 'backend']);
+      expect(fields['priority']).toEqual({ name: 'High' });
     });
 
     it('creates issue without description when omitted', async () => {
-      mockFetch.mockResolvedValueOnce(
-        makeOkResponse({ id: '10003', key: 'TEST-3', self: '' }, 201),
-      );
+      mockBridge.mockReturnValueOnce({ id: '10003', key: 'TEST-3', self: '' });
 
       await client.createIssue({ type: 'Task', summary: 'Quick task' });
 
-      const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-      const body = JSON.parse(options.body as string) as {
-        fields: { description?: unknown };
-      };
-      expect(body.fields.description).toBeUndefined();
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      const fields = (cmd['body'] as { fields: Record<string, unknown> }).fields;
+      expect(fields['description']).toBeUndefined();
     });
   });
 
@@ -132,11 +98,11 @@ describe('JiraClient', () => {
   // -------------------------------------------------------------------------
 
   describe('getIssue', () => {
-    it('fetches by key and returns fields', async () => {
+    it('calls bridge with jira_get_issue and returns fields', async () => {
       const issueData = {
         id: '10001',
         key: 'TEST-1',
-        self: 'https://test.atlassian.net/rest/api/3/issue/10001',
+        self: '',
         fields: {
           summary: 'My issue',
           status: { name: 'To Do', statusCategory: { key: 'new' } },
@@ -145,7 +111,7 @@ describe('JiraClient', () => {
         },
       };
 
-      mockFetch.mockResolvedValueOnce(makeOkResponse(issueData));
+      mockBridge.mockReturnValueOnce(issueData);
 
       const result = await client.getIssue('TEST-1');
 
@@ -153,23 +119,9 @@ describe('JiraClient', () => {
       expect(result.fields.summary).toBe('My issue');
       expect(result.fields.status.name).toBe('To Do');
 
-      const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/rest/api/3/issue/TEST-1');
-    });
-
-    it('appends fields query param when fields are specified', async () => {
-      const issueData = {
-        id: '10001',
-        key: 'TEST-1',
-        self: '',
-        fields: { summary: 'Test', status: { name: 'Done' }, updated: '', created: '' },
-      };
-      mockFetch.mockResolvedValueOnce(makeOkResponse(issueData));
-
-      await client.getIssue('TEST-1', ['summary', 'status']);
-
-      const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('fields=summary%2Cstatus');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('jira_get_issue');
+      expect(cmd['key']).toBe('TEST-1');
     });
   });
 
@@ -178,62 +130,45 @@ describe('JiraClient', () => {
   // -------------------------------------------------------------------------
 
   describe('transitionIssue', () => {
-    it('gets available transitions then executes the matching one', async () => {
-      // First call: GET transitions
-      mockFetch.mockResolvedValueOnce(
-        makeOkResponse({
-          transitions: [
-            { id: '11', name: 'To Do' },
-            { id: '21', name: 'In Progress' },
-            { id: '31', name: 'Done' },
-          ],
-        }),
-      );
-
-      // Second call: POST transition
-      mockFetch.mockResolvedValueOnce(makeOkResponse({}, 204));
+    it('fetches transitions then calls bridge with matched id', async () => {
+      // First call: get transitions
+      mockBridge.mockReturnValueOnce([
+        { id: '11', name: 'To Do' },
+        { id: '21', name: 'In Progress' },
+        { id: '31', name: 'Done' },
+      ]);
+      // Second call: perform transition
+      mockBridge.mockReturnValueOnce({ success: true });
 
       await client.transitionIssue('TEST-1', 'In Progress');
 
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockBridge).toHaveBeenCalledTimes(2);
 
-      // First call should be GET transitions
-      const [getUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(getUrl).toContain('/rest/api/3/issue/TEST-1/transitions');
+      const getCmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(getCmd['action']).toBe('jira_transitions');
+      expect(getCmd['key']).toBe('TEST-1');
 
-      // Second call should POST with the matched transition id
-      const [postUrl, postOptions] = mockFetch.mock.calls[1] as [string, RequestInit];
-      expect(postUrl).toContain('/rest/api/3/issue/TEST-1/transitions');
-      expect(postOptions.method).toBe('POST');
-
-      const postBody = JSON.parse(postOptions.body as string) as { transition: { id: string } };
-      expect(postBody.transition.id).toBe('21');
+      const postCmd = mockBridge.mock.calls[1][0] as Record<string, unknown>;
+      expect(postCmd['action']).toBe('jira_transition');
+      expect(postCmd['key']).toBe('TEST-1');
+      expect(postCmd['transition_id']).toBe('21');
     });
 
     it('matches transitions case-insensitively', async () => {
-      mockFetch.mockResolvedValueOnce(
-        makeOkResponse({
-          transitions: [
-            { id: '11', name: 'To Do' },
-            { id: '31', name: 'Done' },
-          ],
-        }),
-      );
-      mockFetch.mockResolvedValueOnce(makeOkResponse({}, 204));
+      mockBridge.mockReturnValueOnce([
+        { id: '11', name: 'To Do' },
+        { id: '31', name: 'Done' },
+      ]);
+      mockBridge.mockReturnValueOnce({ success: true });
 
       await client.transitionIssue('TEST-1', 'done');
 
-      const [, postOptions] = mockFetch.mock.calls[1] as [string, RequestInit];
-      const postBody = JSON.parse(postOptions.body as string) as { transition: { id: string } };
-      expect(postBody.transition.id).toBe('31');
+      const postCmd = mockBridge.mock.calls[1][0] as Record<string, unknown>;
+      expect(postCmd['transition_id']).toBe('31');
     });
 
     it('throws when target transition is not found', async () => {
-      mockFetch.mockResolvedValueOnce(
-        makeOkResponse({
-          transitions: [{ id: '11', name: 'To Do' }],
-        }),
-      );
+      mockBridge.mockReturnValueOnce([{ id: '11', name: 'To Do' }]);
 
       await expect(client.transitionIssue('TEST-1', 'NonExistent')).rejects.toThrow(/transition/i);
     });
@@ -244,22 +179,17 @@ describe('JiraClient', () => {
   // -------------------------------------------------------------------------
 
   describe('addComment', () => {
-    it('posts ADF comment and returns id', async () => {
-      mockFetch.mockResolvedValueOnce(makeOkResponse({ id: '55001' }, 201));
+    it('calls bridge with jira_add_comment and returns id', async () => {
+      mockBridge.mockReturnValueOnce({ comment_id: '55001' });
 
       const result = await client.addComment('TEST-1', 'Hello world');
 
       expect(result.id).toBe('55001');
 
-      const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/rest/api/3/issue/TEST-1/comment');
-      expect(options.method).toBe('POST');
-
-      const body = JSON.parse(options.body as string) as {
-        body: { version: number; type: string; content: unknown[] };
-      };
-      expect(body.body.version).toBe(1);
-      expect(body.body.type).toBe('doc');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('jira_add_comment');
+      expect(cmd['key']).toBe('TEST-1');
+      expect(Array.isArray(cmd['adf_content'])).toBe(true);
     });
   });
 
@@ -268,42 +198,32 @@ describe('JiraClient', () => {
   // -------------------------------------------------------------------------
 
   describe('search', () => {
-    it('posts JQL and returns issues', async () => {
-      const searchResult = {
-        total: 2,
-        startAt: 0,
-        maxResults: 50,
-        issues: [
-          { id: '1', key: 'TEST-1', self: '', fields: { summary: 'A', status: { name: 'To Do' }, updated: '', created: '' } },
-          { id: '2', key: 'TEST-2', self: '', fields: { summary: 'B', status: { name: 'Done' }, updated: '', created: '' } },
-        ],
-      };
+    it('calls bridge with jira_search and returns issues', async () => {
+      const issues = [
+        { id: '1', key: 'TEST-1', self: '', fields: { summary: 'A', status: { name: 'To Do' }, updated: '', created: '' } },
+        { id: '2', key: 'TEST-2', self: '', fields: { summary: 'B', status: { name: 'Done' }, updated: '', created: '' } },
+      ];
 
-      mockFetch.mockResolvedValueOnce(makeOkResponse(searchResult));
+      mockBridge.mockReturnValueOnce({ issues });
 
       const result = await client.search('project = TEST');
 
-      expect(result.total).toBe(2);
       expect(result.issues).toHaveLength(2);
       expect(result.issues[0].key).toBe('TEST-1');
 
-      const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/rest/api/3/issue/search');
-      expect(options.method).toBe('POST');
-
-      const body = JSON.parse(options.body as string) as { jql: string; maxResults: number };
-      expect(body.jql).toBe('project = TEST');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('jira_search');
+      expect(cmd['jql']).toBe('project = TEST');
     });
 
-    it('sends custom fields and maxResults', async () => {
-      mockFetch.mockResolvedValueOnce(makeOkResponse({ total: 0, startAt: 0, maxResults: 10, issues: [] }));
+    it('passes custom fields and maxResults to bridge', async () => {
+      mockBridge.mockReturnValueOnce({ issues: [] });
 
       await client.search('project = TEST', ['summary', 'status'], 10);
 
-      const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-      const body = JSON.parse(options.body as string) as { fields: string[]; maxResults: number };
-      expect(body.fields).toEqual(['summary', 'status']);
-      expect(body.maxResults).toBe(10);
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['fields']).toEqual(['summary', 'status']);
+      expect(cmd['max_results']).toBe(10);
     });
   });
 
@@ -312,24 +232,20 @@ describe('JiraClient', () => {
   // -------------------------------------------------------------------------
 
   describe('error handling', () => {
-    it('throws with status code on non-ok HTTP response', async () => {
-      mockFetch.mockResolvedValueOnce(makeErrorResponse(404, { errorMessages: ['Issue not found'] }));
+    it('propagates bridge errors', async () => {
+      mockBridge.mockImplementationOnce(() => {
+        throw new Error('Atlassian bridge error [AtlassianAPIError]: HTTP 404 Not Found');
+      });
 
       await expect(client.getIssue('TEST-999')).rejects.toThrow('404');
     });
 
-    it('throws with status code on 401 response', async () => {
-      mockFetch.mockResolvedValueOnce(makeErrorResponse(401, { message: 'Unauthorized' }));
+    it('propagates 401 bridge errors', async () => {
+      mockBridge.mockImplementationOnce(() => {
+        throw new Error('Atlassian bridge error [AtlassianAPIError]: HTTP 401 Unauthorized');
+      });
 
       await expect(client.getIssue('TEST-1')).rejects.toThrow('401');
-    });
-
-    it('throws on 400 bad request from createIssue', async () => {
-      mockFetch.mockResolvedValueOnce(
-        makeErrorResponse(400, { errorMessages: [], errors: { summary: 'Field required' } }),
-      );
-
-      await expect(client.createIssue({ type: 'Story', summary: '' })).rejects.toThrow('400');
     });
   });
 
@@ -341,8 +257,6 @@ describe('JiraClient', () => {
     it('throws when boardId is not configured for createSprint', async () => {
       const clientNoBoardId = new JiraClient({
         baseUrl: 'https://test.atlassian.net',
-        email: 'test@example.com',
-        apiToken: 'test-token',
         projectKey: 'TEST',
       });
 
@@ -351,36 +265,30 @@ describe('JiraClient', () => {
       ).rejects.toThrow(/boardId/i);
     });
 
-    it('creates a sprint with correct agile API path', async () => {
-      mockFetch.mockResolvedValueOnce(
-        makeOkResponse({ id: 5, name: 'Sprint 1', state: 'future', originBoardId: 42 }),
-      );
+    it('creates a sprint with correct body via bridge', async () => {
+      mockBridge.mockReturnValueOnce({ id: 5, name: 'Sprint 1', state: 'future', originBoardId: 42 });
 
       const result = await client.createSprint({ name: 'Sprint 1', goal: 'Ship it' });
 
       expect(result.id).toBe(5);
 
-      const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/rest/agile/1.0/sprint');
-      expect(options.method).toBe('POST');
-
-      const body = JSON.parse(options.body as string) as { name: string; originBoardId: number; goal: string };
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('jira_create_sprint');
+      const body = cmd['body'] as { name: string; originBoardId: number; goal: string };
       expect(body.name).toBe('Sprint 1');
       expect(body.originBoardId).toBe(42);
       expect(body.goal).toBe('Ship it');
     });
 
-    it('moves issues to sprint', async () => {
-      mockFetch.mockResolvedValueOnce(makeOkResponse({}, 204));
+    it('moves issues to sprint via bridge', async () => {
+      mockBridge.mockReturnValueOnce({ success: true });
 
       await client.moveIssuesToSprint(5, ['TEST-1', 'TEST-2']);
 
-      const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/rest/agile/1.0/sprint/5/issue');
-      expect(options.method).toBe('POST');
-
-      const body = JSON.parse(options.body as string) as { issues: string[] };
-      expect(body.issues).toEqual(['TEST-1', 'TEST-2']);
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('jira_move_issues_to_sprint');
+      expect(cmd['sprint_id']).toBe(5);
+      expect(cmd['issue_keys']).toEqual(['TEST-1', 'TEST-2']);
     });
   });
 
@@ -389,18 +297,16 @@ describe('JiraClient', () => {
   // -------------------------------------------------------------------------
 
   describe('getProject', () => {
-    it('fetches project by key and returns structured result', async () => {
-      mockFetch.mockResolvedValueOnce(
-        makeOkResponse({
-          id: '10000',
-          key: 'TEST',
-          name: 'Test Project',
-          issueTypes: [
-            { id: '1', name: 'Epic', subtask: false },
-            { id: '2', name: 'Story', subtask: false },
-          ],
-        }),
-      );
+    it('calls bridge with jira_get_project and returns structured result', async () => {
+      mockBridge.mockReturnValueOnce({
+        id: '10000',
+        key: 'TEST',
+        name: 'Test Project',
+        issueTypes: [
+          { id: '1', name: 'Epic', subtask: false },
+          { id: '2', name: 'Story', subtask: false },
+        ],
+      });
 
       const result = await client.getProject();
 
@@ -408,8 +314,9 @@ describe('JiraClient', () => {
       expect(result.name).toBe('Test Project');
       expect(Array.isArray(result.issueTypes)).toBe(true);
 
-      const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
-      expect(url).toContain('/rest/api/3/project/TEST');
+      const cmd = mockBridge.mock.calls[0][0] as Record<string, unknown>;
+      expect(cmd['action']).toBe('jira_get_project');
+      expect(cmd['project_key']).toBe('TEST');
     });
   });
 });

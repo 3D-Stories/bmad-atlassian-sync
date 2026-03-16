@@ -1,11 +1,10 @@
 /**
- * Jira Cloud REST API v3 client.
- * Uses ADF (Atlassian Document Format) for all text content.
- * Agile operations use the /rest/agile/1.0/ base path.
+ * Jira client — delegates all API calls to the Python atlassian-bridge.py script.
+ * The bridge handles authentication, cloud-ID routing, and v1/v2 API selection.
  */
 
-import { getAuthHeader } from '../config.js';
 import { textToAdf, type AdfDocument } from './adf.js';
+import { callBridge } from './atlassian-bridge.js';
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -48,27 +47,18 @@ export interface SearchResult {
   issues: JiraIssue[];
 }
 
-interface JiraTransition {
-  id: string;
-  name: string;
-}
-
-interface JiraField {
-  id: string;
-  name: string;
-  key: string;
-}
-
 // ---------------------------------------------------------------------------
 // Client config
 // ---------------------------------------------------------------------------
 
 export interface JiraClientConfig {
-  baseUrl: string;
-  email: string;
-  apiToken: string;
+  baseUrl: string;   // Site URL — kept for constructing browse links
   projectKey: string;
   boardId?: number;
+  // email / apiToken / cloudId are now handled by the Python bridge
+  email?: string;
+  apiToken?: string;
+  cloudId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,92 +66,12 @@ export interface JiraClientConfig {
 // ---------------------------------------------------------------------------
 
 export class JiraClient {
-  private readonly baseUrl: string;
-  private readonly authHeader: string;
   private readonly projectKey: string;
   private readonly boardId?: number;
 
-  /** Cached result of the Epic Link custom field ID discovery. */
-  private epicLinkFieldId: string | undefined | null = null; // null = not yet fetched
-
   constructor(config: JiraClientConfig) {
-    // Strip trailing slash for consistency
-    this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    this.authHeader = getAuthHeader(config.email, config.apiToken);
     this.projectKey = config.projectKey;
     this.boardId = config.boardId;
-  }
-
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
-
-  private get commonHeaders(): Record<string, string> {
-    return {
-      Authorization: this.authHeader,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    };
-  }
-
-  private apiUrl(path: string): string {
-    return `${this.baseUrl}/rest/api/3/${path.replace(/^\//, '')}`;
-  }
-
-  private agileUrl(path: string): string {
-    return `${this.baseUrl}/rest/agile/1.0/${path.replace(/^\//, '')}`;
-  }
-
-  /**
-   * Makes a fetch request and throws a descriptive error on non-ok responses.
-   */
-  private async request<T>(url: string, options: RequestInit = {}): Promise<T> {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        ...this.commonHeaders,
-        ...(options.headers as Record<string, string> | undefined),
-      },
-    });
-
-    if (!response.ok) {
-      let bodyText: string;
-      try {
-        bodyText = await response.text();
-      } catch {
-        bodyText = '<unable to read response body>';
-      }
-      throw new Error(`Jira API error ${response.status}: ${bodyText}`);
-    }
-
-    // 204 No Content — return empty object
-    if (response.status === 204) {
-      return {} as T;
-    }
-
-    return response.json() as Promise<T>;
-  }
-
-  // -------------------------------------------------------------------------
-  // Field discovery (private, cached)
-  // -------------------------------------------------------------------------
-
-  /**
-   * Fetches all Jira fields and returns the ID of the "Epic Link" custom field.
-   * Result is cached after the first successful call.
-   */
-  private async getEpicLinkField(): Promise<string | undefined> {
-    if (this.epicLinkFieldId !== null) {
-      return this.epicLinkFieldId;
-    }
-
-    const fields = await this.request<JiraField[]>(this.apiUrl('field'));
-    const epicLinkField = fields.find(
-      (f) => f.name === 'Epic Link' || f.key === 'Epic Link',
-    );
-
-    this.epicLinkFieldId = epicLinkField?.id;
-    return this.epicLinkFieldId;
   }
 
   // -------------------------------------------------------------------------
@@ -192,35 +102,25 @@ export class JiraClient {
       fields['priority'] = { name: params.priority };
     }
 
-    // Attach epic link if provided
     if (params.epicKey) {
-      const epicLinkFieldId = await this.getEpicLinkField();
-      if (epicLinkFieldId) {
-        fields[epicLinkFieldId] = params.epicKey;
-      } else {
-        // Try the standard parent field (next-gen projects)
-        fields['parent'] = { key: params.epicKey };
-      }
+      // Use standard parent field; bridge handles field discovery if needed
+      fields['parent'] = { key: params.epicKey };
     }
 
-    return this.request<{ id: string; key: string; self: string }>(
-      this.apiUrl('issue'),
-      {
-        method: 'POST',
-        body: JSON.stringify({ fields }),
-      },
-    );
+    const result = callBridge({ action: 'jira_create_issue', body: { fields } }) as {
+      key: string;
+      id: string;
+      self?: string;
+    };
+    return { id: result.id, key: result.key, self: result.self ?? '' };
   }
 
   /**
    * Retrieves a Jira issue by its key.
    */
-  async getIssue(issueKey: string, fields?: string[]): Promise<JiraIssue> {
-    let url = this.apiUrl(`issue/${issueKey}`);
-    if (fields && fields.length > 0) {
-      url += `?fields=${encodeURIComponent(fields.join(','))}`;
-    }
-    return this.request<JiraIssue>(url);
+  async getIssue(issueKey: string, _fields?: string[]): Promise<JiraIssue> {
+    const result = callBridge({ action: 'jira_get_issue', key: issueKey });
+    return result as JiraIssue;
   }
 
   /**
@@ -234,10 +134,7 @@ export class JiraClient {
       processedFields['description'] = textToAdf(processedFields['description'] as string);
     }
 
-    await this.request<void>(this.apiUrl(`issue/${issueKey}`), {
-      method: 'PUT',
-      body: JSON.stringify({ fields: processedFields }),
-    });
+    callBridge({ action: 'jira_update_issue', key: issueKey, body: { fields: processedFields } });
   }
 
   // -------------------------------------------------------------------------
@@ -248,9 +145,10 @@ export class JiraClient {
    * Transitions an issue to a new status by name (case-insensitive).
    */
   async transitionIssue(issueKey: string, targetStatus: string): Promise<void> {
-    const { transitions } = await this.request<{ transitions: JiraTransition[] }>(
-      this.apiUrl(`issue/${issueKey}/transitions`),
-    );
+    const transitions = callBridge({ action: 'jira_transitions', key: issueKey }) as Array<{
+      id: string;
+      name: string;
+    }>;
 
     const match = transitions.find(
       (t) => t.name.toLowerCase() === targetStatus.toLowerCase(),
@@ -263,10 +161,7 @@ export class JiraClient {
       );
     }
 
-    await this.request<void>(this.apiUrl(`issue/${issueKey}/transitions`), {
-      method: 'POST',
-      body: JSON.stringify({ transition: { id: match.id } }),
-    });
+    callBridge({ action: 'jira_transition', key: issueKey, transition_id: match.id });
   }
 
   // -------------------------------------------------------------------------
@@ -277,10 +172,15 @@ export class JiraClient {
    * Adds a comment to an issue.
    */
   async addComment(issueKey: string, text: string): Promise<{ id: string }> {
-    return this.request<{ id: string }>(this.apiUrl(`issue/${issueKey}/comment`), {
-      method: 'POST',
-      body: JSON.stringify({ body: textToAdf(text) }),
-    });
+    const adf = textToAdf(text);
+    // Bridge expects the ADF content array, not the full doc wrapper
+    const adfContent = (adf as { content: unknown[] }).content ?? [];
+    const result = callBridge({
+      action: 'jira_add_comment',
+      key: issueKey,
+      adf_content: adfContent,
+    }) as { comment_id: string };
+    return { id: result.comment_id };
   }
 
   // -------------------------------------------------------------------------
@@ -291,20 +191,19 @@ export class JiraClient {
    * Searches for issues using JQL.
    */
   async search(jql: string, fields?: string[], maxResults = 50): Promise<SearchResult> {
-    const body: Record<string, unknown> = {
+    const result = callBridge({
+      action: 'jira_search',
       jql,
-      maxResults,
+      fields: fields ?? null,
+      max_results: maxResults,
+    }) as { issues: JiraIssue[] };
+
+    return {
+      total: result.issues.length,
       startAt: 0,
+      maxResults,
+      issues: result.issues,
     };
-
-    if (fields && fields.length > 0) {
-      body['fields'] = fields;
-    }
-
-    return this.request<SearchResult>(this.apiUrl('issue/search'), {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
   }
 
   // -------------------------------------------------------------------------
@@ -320,7 +219,11 @@ export class JiraClient {
     name: string;
     issueTypes: Array<{ id: string; name: string; subtask?: boolean }>;
   }> {
-    return this.request(this.apiUrl(`project/${this.projectKey}`));
+    const result = callBridge({
+      action: 'jira_get_project',
+      project_key: this.projectKey,
+    });
+    return result as { id: string; key: string; name: string; issueTypes: Array<{ id: string; name: string; subtask?: boolean }> };
   }
 
   // -------------------------------------------------------------------------
@@ -352,19 +255,14 @@ export class JiraClient {
     if (params.startDate !== undefined) body['startDate'] = params.startDate;
     if (params.endDate !== undefined) body['endDate'] = params.endDate;
 
-    return this.request(this.agileUrl('sprint'), {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    const result = callBridge({ action: 'jira_create_sprint', body });
+    return result as { id: number; name: string; state: string; originBoardId: number };
   }
 
   /**
    * Moves a set of issues into a sprint.
    */
   async moveIssuesToSprint(sprintId: number, issueKeys: string[]): Promise<void> {
-    await this.request<void>(this.agileUrl(`sprint/${sprintId}/issue`), {
-      method: 'POST',
-      body: JSON.stringify({ issues: issueKeys }),
-    });
+    callBridge({ action: 'jira_move_issues_to_sprint', sprint_id: sprintId, issue_keys: issueKeys });
   }
 }
