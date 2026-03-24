@@ -1,0 +1,4 @@
+module,phase,name,code,sequence,workflow-file,command,required,agent-name,agent-command,agent-display-name,agent-title,options,description,output-location,outputs
+ats,anytime,Sync to Jira,SJ,,skill:bmad-atlassian-sync,bmad-atlassian-sync,false,,,,,,"Push local BMAD artifacts to Jira and Confluence or pull latest Jira state. Bidirectional sync with conflict resolution.",,synced artifacts
+ats,anytime,Pull from Jira,PJ,,skill:bmad-atlassian-sync,bmad-atlassian-sync,false,,,,,Pull Mode,"Pull latest Jira state into local .md frontmatter. Resolves conflicts using configured strategy.",,updated frontmatter
+ats,anytime,Push to Jira,PU,,skill:bmad-atlassian-sync,bmad-atlassian-sync,false,,,,,Push Mode,"Push stories epics and sprint status to Jira. Creates new issues or updates existing ones. Publishes Confluence pages.",,jira issues and confluence pages

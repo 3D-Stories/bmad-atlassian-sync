@@ -13,14 +13,14 @@ The dev agent (`bmm-dev.customize.yaml`) includes a critical action that trigger
 ```xml
 <sync-on-start>
 <step goal="Pull latest Jira state for relevant artifacts">
-  <action>Load atlassian_sync config from {project-root}/_bmad/bmm/config.yaml</action>
+  <action>Load atlassian_sync config from {project-root}/_bmad/ats/config.yaml</action>
   <check if="atlassian_sync.enabled == true AND credentials present in .env">
     <action>Identify which .md files this workflow will read or modify during execution</action>
     <action>For each file with a `jira_key` in frontmatter:</action>
-    <action>Run: atlassian-sync pull {file_path}</action>
+    <action>Run: npx tsx {project-root}/_bmad/ats/cli/cli.ts pull {file_path}</action>
     <action>Log any conflicts resolved during pull</action>
     <action>If sprint-status.yaml has a `jira_sprint_id`, pull sprint state too:</action>
-    <action>Run: atlassian-sync pull {implementation_artifacts}/sprint-status.yaml</action>
+    <action>Run: npx tsx {project-root}/_bmad/ats/cli/cli.ts pull {implementation_artifacts}/sprint-status.yaml</action>
     <action>Proceed with the workflow using the freshest local state</action>
   </check>
   <check if="atlassian_sync.enabled == false OR missing">

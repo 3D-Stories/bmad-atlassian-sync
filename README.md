@@ -16,7 +16,7 @@ Bidirectional sync between [BMAD](https://github.com/bmad-method/bmad) `.md` art
 - **Pull Jira state** into local `.md` frontmatter (status, timestamps, remote changes)
 - **Bidirectional conflict resolution** — four strategies: `merge`, `local-wins`, `remote-wins`, `ask`
 - **Publish Confluence pages** — sprint summaries, retrospectives, and change proposals
-- **BMAD workflow integration** — shared skill files hook into sprint-planning, create-story, dev-story, and more
+- **BMAD workflow integration** — agent critical actions and menu entries hook into dev-story, sprint-planning, and more (v6.2.1+)
 - **Standalone CLI** — works without BMAD for any project with Markdown files
 - **Frontmatter-driven** — `jira_key`, `confluence_page_id`, `last_synced_at` written back to `.md` files automatically
 - **Status mapping** — BMAD statuses mapped to Jira transitions (never-downgrade enforced)
@@ -26,17 +26,25 @@ Bidirectional sync between [BMAD](https://github.com/bmad-method/bmad) `.md` art
 
 ## Installation
 
-### Option A: BMAD Project Integration
+### Option A: BMAD Module (recommended for teams)
 
-Use the install script to copy skill files and the CLI into an existing BMAD project:
+Install as a BMAD external module. Requires BMAD v6.2.1+.
+
+**From git clone:**
 
 ```bash
-git clone https://github.com/your-org/bmad-atlassian-sync.git
+git clone https://github.com/3D-Stories/bmad-atlassian-sync.git
 cd bmad-atlassian-sync
 ./scripts/install-bmad.sh /path/to/your-bmad-project
 ```
 
-This copies the BMAD skill files to `.claude/skills/bmad-atlassian-sync/` and the CLI source to `.claude/tools/atlassian-sync/` inside your project, then runs `npm install`.
+This copies the `ats/` module to `_bmad/ats/` in your project and runs the module installer, which:
+1. Installs CLI dependencies (`npm install` in `_bmad/ats/cli/`)
+2. Registers the skill in `_bmad/_config/skill-manifest.csv`
+3. Registers the module in `_bmad/_config/manifest.yaml`
+4. Patches agent customization files (`bmm-dev`, `bmm-sm`, `bmm-quick-flow-solo-dev`) with sync critical actions and menu entries
+
+**Module code:** `ats` | **npm package:** `bmad-atlassian-sync`
 
 ### Option B: Standalone CLI
 
@@ -57,7 +65,7 @@ atlassian-sync --help
 ### Option C: Run Directly from Source
 
 ```bash
-git clone https://github.com/your-org/bmad-atlassian-sync.git
+git clone https://github.com/3D-Stories/bmad-atlassian-sync.git
 cd bmad-atlassian-sync
 npm install
 npx tsx src/cli.ts --help
@@ -83,26 +91,27 @@ JIRA_BOARD_ID=1
 
 Your Jira API token can be generated at: https://id.atlassian.com/manage-profile/security/api-tokens
 
-### BMAD Config Extension
+### BMAD Module Config
 
-Add the following to your project's `_bmad/bmm/config.yaml` to enable sync in BMAD workflows. See `bmad-integration/config/bmad-config-extension.yaml` for the full template:
+When installed as a BMAD module, configuration lives in `_bmad/ats/config.yaml`. Edit this file to enable sync:
 
 ```yaml
-atlassian_sync: enabled
-jira_base_url: "https://your-domain.atlassian.net"
-jira_project_key: "PROJ"
-jira_email: "${JIRA_EMAIL}"
-jira_api_token: "${JIRA_API_TOKEN}"
-jira_board_id: 1
-confluence_base_url: "https://your-domain.atlassian.net/wiki"
-confluence_space_key: "PROJ"
+atlassian_sync:
+  enabled: true
+  jira_base_url: "https://your-domain.atlassian.net"
+  jira_project_key: "PROJ"
+  jira_email: "${ATLASSIAN_SA_EMAIL}"
+  jira_api_token: "${ATLASSIAN_API_TOKEN}"
+  jira_board_id: 1
+  confluence_base_url: "https://your-domain.atlassian.net/wiki"
+  confluence_space_key: "PROJ"
 ```
 
 `${VAR}` placeholders are resolved from your `.env` file at runtime.
 
 ### Standalone Config File
 
-For non-BMAD projects, create `atlassian-sync.yaml` in your project root. See `bmad-integration/config/atlassian-sync.yaml.example` for the template:
+For non-BMAD projects, create `atlassian-sync.yaml` in your project root. See `ats/data/atlassian-sync.yaml.example` for the template:
 
 ```yaml
 jira:
@@ -197,25 +206,48 @@ The CLI reads and writes the following fields in `.md` file frontmatter:
 
 ---
 
-## BMAD Skill Integration
+## BMAD Module Integration (v6.2.1+)
 
-After running `install-bmad.sh`, the following shared skill files are available in `.claude/skills/bmad-atlassian-sync/`:
-
-| File | Purpose |
-|---|---|
-| `SKILL.md` | Skill entry point and description |
-| `workflow.md` | Full sync workflow — all available operations |
-| `sync-on-start.md` | Included by BMAD skills on story/sprint start |
-| `sync-on-complete.md` | Included by BMAD skills on story/sprint complete |
-| `jira-mappings.md` | BMAD artifact → Jira issue type and status mappings |
-| `confluence-mappings.md` | Confluence page hierarchy and parent page mappings |
-
-BMAD workflows that integrate with atlassian-sync include: `sprint-planning`, `create-story`, `dev-story`, `correct-course`, `retrospective`, `code-review`, `sprint-status`, and `create-epics-and-stories`.
-
-To invoke the skill manually in a Claude Code session:
+After installation, the `ats` module lives at `_bmad/ats/` in your project:
 
 ```
-/bmad-atlassian-sync push --type story docs/stories/1-1-user-auth.md
+_bmad/ats/
+├── config.yaml                          # Module config (edit to enable sync)
+├── module-help.csv                      # bmad-help integration
+├── install.sh                           # Module installer (re-run to repair)
+├── skills/bmad-atlassian-sync/          # BMAD skill files
+│   ├── SKILL.md                         # Skill entry point
+│   ├── bmad-skill-manifest.yaml         # Skill metadata
+│   ├── workflow.md                      # Sync operations
+│   ├── sync-on-start.md                 # Pre-workflow pull docs
+│   ├── sync-on-complete.md              # Post-workflow push docs
+│   ├── jira-mappings.md                 # Artifact + status mappings
+│   └── confluence-mappings.md           # Page hierarchy + update rules
+├── cli/                                 # TypeScript CLI
+│   ├── cli.ts, config.ts, ...
+│   ├── clients/, parsers/, sync/, templates/
+│   └── package.json
+└── data/                                # Config templates
+    ├── agent-customizations.yaml
+    └── bmad-config-extension.yaml
+```
+
+### How Integration Works
+
+BMAD v6.2.1 uses **agent customization files** (`.customize.yaml`) for extensions. The installer patches these agents:
+
+| Agent | Integration |
+|---|---|
+| `bmm-dev` | Critical actions: pull before dev-story, push after completion. Menu: `sync-jira` |
+| `bmm-sm` | Critical actions: push sprint + Confluence page after sprint planning. Menu: `sync-jira` |
+| `bmm-quick-flow-solo-dev` | Critical actions: pull before, push after implementation. Menu: `sync-jira` |
+
+Sync is **opt-in** — agents check `atlassian_sync.enabled` in `_bmad/ats/config.yaml` before running any sync operations. If disabled or credentials are missing, sync steps are silently skipped.
+
+To invoke sync manually from any agent's menu:
+
+```
+sync-jira
 ```
 
 ---
@@ -238,35 +270,31 @@ Configure via `SYNC_CONFLICT_STRATEGY` env var or `sync.conflict_strategy` in co
 ## Architecture
 
 ```
-src/
-  cli.ts                    # CLI entry point — argument parsing and command dispatch
-  config.ts                 # Config loader — .env + BMAD config.yaml + env var resolution
-  clients/
-    jira-client.ts          # Jira REST API v3 client
-    confluence-client.ts    # Confluence REST API v2 client
-    adf.ts                  # Atlassian Document Format helpers
-  parsers/
-    md-frontmatter.ts       # YAML frontmatter parser/updater for .md files
-    sprint-status.ts        # sprint-status.yaml parser/updater
-  sync/
-    sync-engine.ts          # Orchestrates push/pull operations
-    conflict-resolver.ts    # Status conflict resolution logic
-    field-mapper.ts         # Maps BMAD fields to Jira/Confluence API fields
-  templates/
-    sprint-page.ts          # Confluence sprint summary page template
-    retro-page.ts           # Confluence retrospective page template
-    change-proposal-page.ts # Confluence change proposal page template
-bmad-integration/
-  skills/bmad-atlassian-sync/   # BMAD Claude Code skill files
-  config/                       # Config templates for BMAD and standalone projects
+ats/                            # BMAD module (installed to _bmad/ats/)
+  config.yaml                   # Module configuration
+  module-help.csv               # bmad-help catalog entries
+  install.sh                    # Post-install script
+  skills/bmad-atlassian-sync/   # BMAD skill files
+    SKILL.md, workflow.md, bmad-skill-manifest.yaml
+    sync-on-start.md, sync-on-complete.md
+    jira-mappings.md, confluence-mappings.md
+  cli/                          # TypeScript CLI (runs via npx tsx)
+    cli.ts                      # Entry point — argument parsing and command dispatch
+    config.ts                   # Config loader — .env + module config + env var resolution
+    clients/                    # Jira REST API v3, Confluence REST API v2, ADF helpers
+    parsers/                    # YAML frontmatter, sprint-status.yaml parsers
+    sync/                       # Sync engine, conflict resolver, field mapper
+    templates/                  # Confluence page templates (sprint, retro, change-proposal)
+  data/                         # Config templates and agent customization patches
+src/                            # Development source (same as ats/cli/, canonical copy)
 scripts/
-  install-bmad.sh           # Install into a BMAD project
-  install-standalone.sh     # Install CLI standalone
+  install-bmad.sh               # Manual installer (copies ats/ to target project)
+  install-standalone.sh         # Standalone CLI installer
 tests/
-  integration/              # End-to-end round-trip tests
-  parsers/                  # Unit tests for parsers
-  clients/                  # Unit tests for API clients
-  sync/                     # Unit tests for sync engine
+  integration/                  # End-to-end round-trip tests
+  parsers/                      # Unit tests for parsers
+  clients/                      # Unit tests for API clients
+  sync/                         # Unit tests for sync engine
 ```
 
 ---
@@ -281,7 +309,7 @@ tests/
 ### Setup
 
 ```bash
-git clone https://github.com/your-org/bmad-atlassian-sync.git
+git clone https://github.com/3D-Stories/bmad-atlassian-sync.git
 cd bmad-atlassian-sync
 npm install
 ```

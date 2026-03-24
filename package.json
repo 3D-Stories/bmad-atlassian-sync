@@ -1,21 +1,48 @@
 {
   "name": "bmad-atlassian-sync",
   "version": "0.1.0",
-  "description": "Bidirectional sync between BMAD .md artifacts and Jira/Confluence Cloud",
+  "description": "BMAD module: Bidirectional sync between BMAD .md artifacts and Jira/Confluence Cloud",
   "type": "module",
   "bin": {
     "atlassian-sync": "./dist/cli.js"
   },
+  "files": [
+    "ats/",
+    "dist/",
+    "README.md",
+    ".env.example"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "echo 'Run ats/install.sh in your BMAD project to complete setup'"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/3D-Stories/bmad-atlassian-sync.git"
+  },
+  "keywords": [
+    "bmad",
+    "bmad-module",
+    "jira",
+    "confluence",
+    "atlassian",
+    "sync"
+  ],
+  "license": "MIT",
   "devDependencies": {
     "typescript": "^5.7.0",
     "tsx": "^4.19.0",
     "vitest": "^3.0.0",
     "@types/node": "^22.0.0"
+  },
+  "bmad": {
+    "moduleCode": "ats",
+    "moduleName": "Atlassian Sync",
+    "moduleDir": "ats",
+    "installScript": "ats/install.sh",
+    "minBmadVersion": "6.2.0"
   }
 }

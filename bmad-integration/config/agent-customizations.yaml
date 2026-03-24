@@ -1,0 +1,82 @@
+# Agent Customization Templates for bmad-atlassian-sync
+#
+# These entries should be merged into the corresponding .customize.yaml files
+# in _bmad/_config/agents/ of the target BMAD project.
+#
+# The install-bmad.sh script applies these automatically.
+# To apply manually, copy the relevant sections into each agent's file.
+
+# ─────────────────────────────────────────────────
+# bmm-dev.customize.yaml
+# Agents: bmad-agent-dev, bmad-agent-quick-flow-solo-dev
+# ─────────────────────────────────────────────────
+bmm-dev:
+  critical_actions:
+    - >
+      ATLASSIAN SYNC (if enabled): Before starting any story implementation
+      (bmad-dev-story, bmad-quick-dev), check {project-root}/_bmad/bmm/config.yaml
+      for atlassian_sync.enabled. If true and .env credentials are present,
+      run `atlassian-sync pull` for all .md files you will read or modify
+      to get the latest Jira state before proceeding.
+    - >
+      ATLASSIAN SYNC (if enabled): After completing story implementation
+      (all ACs satisfied, story status updated), check atlassian_sync.enabled.
+      If true and .env credentials are present, run `atlassian-sync push`
+      for all .md files you created or modified, then run
+      `atlassian-sync transition` for any status changes. If Confluence
+      artifacts were produced, push those too.
+
+  menu:
+    - trigger: sync-jira
+      workflow: "{project-root}/_bmad/_config/custom/bmad-atlassian-sync/workflow.md"
+      description: Sync BMAD artifacts with Jira/Confluence (push, pull, or transition)
+
+  memories:
+    - >
+      Atlassian sync is available as a custom skill. Reference files:
+      jira-mappings.md (status mapping, artifact types, sync rules),
+      confluence-mappings.md (page hierarchy, update rules).
+      Both are in the bmad-atlassian-sync skill directory.
+
+# ─────────────────────────────────────────────────
+# bmm-sm.customize.yaml
+# Agent: bmad-agent-sm (Scrum Master)
+# ─────────────────────────────────────────────────
+bmm-sm:
+  critical_actions:
+    - >
+      ATLASSIAN SYNC (if enabled): After sprint planning completes
+      (sprint-status.yaml created/updated), check {project-root}/_bmad/bmm/config.yaml
+      for atlassian_sync.enabled. If true and .env credentials are present,
+      run `atlassian-sync push --type sprint sprint-status.yaml` to create/update
+      the Jira sprint and move issues, then run
+      `atlassian-sync push --type confluence sprint-status.yaml` to create/update
+      the Confluence sprint page.
+
+  menu:
+    - trigger: sync-jira
+      workflow: "{project-root}/_bmad/_config/custom/bmad-atlassian-sync/workflow.md"
+      description: Sync BMAD artifacts with Jira/Confluence
+
+  memories:
+    - >
+      Atlassian sync is available. After sprint planning, stories can be
+      pushed to Jira and sprint pages published to Confluence automatically.
+
+# ─────────────────────────────────────────────────
+# bmm-quick-flow-solo-dev.customize.yaml
+# Agent: bmad-agent-quick-flow-solo-dev
+# ─────────────────────────────────────────────────
+bmm-quick-flow-solo-dev:
+  critical_actions:
+    - >
+      ATLASSIAN SYNC (if enabled): Before starting any story implementation,
+      check {project-root}/_bmad/bmm/config.yaml for atlassian_sync.enabled.
+      If true and .env credentials are present, run `atlassian-sync pull`
+      for relevant .md files. After completing, run `atlassian-sync push`
+      for all modified .md files.
+
+  menu:
+    - trigger: sync-jira
+      workflow: "{project-root}/_bmad/_config/custom/bmad-atlassian-sync/workflow.md"
+      description: Sync BMAD artifacts with Jira/Confluence

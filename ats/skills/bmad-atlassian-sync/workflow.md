@@ -4,7 +4,9 @@
 
 **Your Role:** Sync orchestrator. Execute the requested sync operation, then return control.
 
-**Integration:** This skill is registered as a custom BMAD skill. Other workflows trigger sync via agent critical actions configured in `.customize.yaml` files. It can also be invoked directly via the agent menu (`sync-jira`).
+**Integration:** This skill is part of the `ats` (Atlassian Sync) BMAD module. Other workflows trigger sync via agent critical actions configured in `.customize.yaml` files. It can also be invoked directly via the agent menu (`sync-jira`).
+
+**CLI:** `npx tsx {project-root}/_bmad/ats/cli/cli.ts` (or `atlassian-sync` if installed standalone)
 
 - Execute ALL steps in exact order; do NOT skip steps
 - Sync is opt-in and silent when disabled — never block the calling workflow
@@ -15,24 +17,29 @@
 
 ### Configuration Loading
 
-Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
+Load config from `{project-root}/_bmad/ats/config.yaml` and resolve:
 
 - `atlassian_sync.enabled` — whether sync is active
 - `atlassian_sync.jira_base_url`, `atlassian_sync.jira_project_key`, `atlassian_sync.jira_board_id`
 - `atlassian_sync.confluence_base_url`, `atlassian_sync.confluence_space_key`
+- `cli_path` — path to the CLI tool (default: `{project-root}/_bmad/ats/cli`)
 
 Then check `.env` in the project root for credentials:
 - `JIRA_EMAIL`, `JIRA_API_TOKEN` (or `ATLASSIAN_SA_EMAIL`, `ATLASSIAN_API_TOKEN`)
 - `ATLASSIAN_CLOUD_ID`, `ATLASSIAN_SITE_URL`
 
+Also load BMM config from `{project-root}/_bmad/bmm/config.yaml` for:
+- `implementation_artifacts` path
+
 ### Paths
 
+- `cli` = `{cli_path}` (default: `{project-root}/_bmad/ats/cli`)
 - `implementation_artifacts` = from bmm config (default: `{project-root}/_bmad-output/implementation-artifacts`)
 - `sprint_status` = `{implementation_artifacts}/sprint-status.yaml`
 
 <initialization>
 <step goal="Check whether Atlassian sync is configured and available">
-  <action>Read `{project-root}/_bmad/bmm/config.yaml`</action>
+  <action>Read `{project-root}/_bmad/ats/config.yaml`</action>
   <action>Check if `atlassian_sync.enabled` is set to `true`</action>
   <action>Check if `.env` file exists in the project root with required credentials</action>
   <check if="atlassian_sync.enabled == true AND credentials present">
@@ -65,11 +72,11 @@ The following operations are available as standalone commands or triggered by ag
   <check if="sync_available == true">
     <action>Read frontmatter from story .md file — check for `jira_key` field</action>
     <check if="jira_key is present">
-      <action>Run: `atlassian-sync push --type story <file_path>`</action>
+      <action>Run: `npx tsx {cli}/cli.ts push --type story <file_path>`</action>
       <action>CLI will detect existing jira_key and issue a PUT/update to the Jira issue</action>
     </check>
     <check if="jira_key is absent">
-      <action>Run: `atlassian-sync push --type story <file_path>`</action>
+      <action>Run: `npx tsx {cli}/cli.ts push --type story <file_path>`</action>
       <action>CLI will create a new Jira Story and return the new jira_key</action>
       <action>Write returned `jira_key` back to the .md file frontmatter</action>
     </check>
@@ -92,11 +99,11 @@ The following operations are available as standalone commands or triggered by ag
   <check if="sync_available == true">
     <action>Read frontmatter from epic .md file — check for `jira_key` field</action>
     <check if="jira_key is present">
-      <action>Run: `atlassian-sync push --type epic <file_path>`</action>
+      <action>Run: `npx tsx {cli}/cli.ts push --type epic <file_path>`</action>
       <action>CLI will update existing Jira Epic</action>
     </check>
     <check if="jira_key is absent">
-      <action>Run: `atlassian-sync push --type epic <file_path>`</action>
+      <action>Run: `npx tsx {cli}/cli.ts push --type epic <file_path>`</action>
       <action>CLI will create a new Jira Epic and return the new jira_key</action>
       <action>Write returned `jira_key` back to the .md file frontmatter</action>
     </check>
@@ -118,16 +125,16 @@ The following operations are available as standalone commands or triggered by ag
   <check if="sync_available == true">
     <action>Read `sprint-status.yaml` — check for `jira_sprint_id` field</action>
     <check if="jira_sprint_id is absent">
-      <action>Run: `atlassian-sync push --type sprint sprint-status.yaml`</action>
+      <action>Run: `npx tsx {cli}/cli.ts push --type sprint sprint-status.yaml`</action>
       <action>CLI creates a new Jira sprint on the configured board</action>
       <action>Write returned `jira_sprint_id` back to sprint-status.yaml</action>
     </check>
     <check if="jira_sprint_id is present">
-      <action>Run: `atlassian-sync push --type sprint sprint-status.yaml`</action>
+      <action>Run: `npx tsx {cli}/cli.ts push --type sprint sprint-status.yaml`</action>
       <action>CLI updates the existing sprint (name, goal, dates)</action>
     </check>
     <action>For each story in sprint-status.yaml with a `jira_key`: move the Jira issue into the sprint</action>
-    <action>Run: `atlassian-sync push --type confluence sprint-status.yaml`</action>
+    <action>Run: `npx tsx {cli}/cli.ts push --type confluence sprint-status.yaml`</action>
     <action>CLI renders the sprint Confluence page template and creates or updates the page</action>
     <action>Write returned `confluence_page_id` back to sprint-status.yaml (if absent)</action>
     <output>Jira sprint created or updated; issues moved; Confluence sprint page created or updated</output>
@@ -147,7 +154,7 @@ The following operations are available as standalone commands or triggered by ag
   <check if="sync_available == true">
     <action>Read current status from .md frontmatter</action>
     <action>Look up Jira transition name from status mappings in jira-mappings.md</action>
-    <action>Run: `atlassian-sync transition --jira-key <jira_key> --status "<bmad_status>"`</action>
+    <action>Run: `npx tsx {cli}/cli.ts transition --jira-key <jira_key> --status "<bmad_status>"`</action>
     <action>CLI maps BMAD status to Jira transition and executes the transition via Jira Agile API</action>
     <action>Apply never-downgrade rule: if Jira status is further along than local status, skip transition and log warning</action>
     <output>Jira issue transitioned to target status (or skipped with warning)</output>
@@ -167,7 +174,7 @@ The following operations are available as standalone commands or triggered by ag
   <check if="sync_available == true">
     <action>Read frontmatter from the .md file — check for `confluence_page_id` field</action>
     <action>Determine page type (sprint, retro, change-proposal) from artifact type</action>
-    <action>Run: `atlassian-sync push --type confluence <file_path>`</action>
+    <action>Run: `npx tsx {cli}/cli.ts push --type confluence <file_path>`</action>
     <check if="confluence_page_id is absent">
       <action>CLI renders template, creates new Confluence page under correct parent per confluence-mappings.md hierarchy</action>
       <action>Write returned `confluence_page_id` back to .md frontmatter</action>
@@ -190,7 +197,7 @@ The following operations are available as standalone commands or triggered by ag
 <operation id="pull-from-jira">
 <step goal="Fetch latest Jira state, compare timestamps, resolve conflicts, update local .md file">
   <check if="sync_available == true">
-    <action>Run: `atlassian-sync pull <file_path>`</action>
+    <action>Run: `npx tsx {cli}/cli.ts pull <file_path>`</action>
     <action>CLI fetches current Jira issue state via REST API</action>
     <action>Compare Jira `updated` timestamp against local .md file `last_modified` frontmatter field</action>
     <check if="Jira is newer than local">

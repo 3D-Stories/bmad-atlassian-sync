@@ -1,32 +1,48 @@
-#!/usr/bin/env bash
-# Install bmad-atlassian-sync into a BMAD project
-set -euo pipefail
+#!/bin/bash
+# Manual installer for bmad-atlassian-sync (ats) BMAD module
+# Use this when installing from a git clone rather than npm.
+#
+# Usage: ./scripts/install-bmad.sh /path/to/your-bmad-project
+#
+# For npm-based install, the BMAD installer handles extraction and
+# calls ats/install.sh directly.
+set -eu
 
 TARGET_DIR="${1:-.}"
-SKILL_DIR="$TARGET_DIR/.claude/skills/bmad-atlassian-sync"
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "Installing bmad-atlassian-sync into $TARGET_DIR..."
+# Resolve to absolute path
+TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
 
-mkdir -p "$SKILL_DIR"
-cp -r "$SCRIPT_DIR/bmad-integration/skills/bmad-atlassian-sync/"* "$SKILL_DIR/"
+BMAD_DIR="$TARGET_DIR/_bmad"
+MODULE_DIR="$BMAD_DIR/ats"
 
-mkdir -p "$TARGET_DIR/.claude/tools/atlassian-sync"
-cp -r "$SCRIPT_DIR/src" "$TARGET_DIR/.claude/tools/atlassian-sync/"
-cp "$SCRIPT_DIR/package.json" "$TARGET_DIR/.claude/tools/atlassian-sync/"
-cp "$SCRIPT_DIR/tsconfig.json" "$TARGET_DIR/.claude/tools/atlassian-sync/"
-
-echo "Installing dependencies..."
-cd "$TARGET_DIR/.claude/tools/atlassian-sync" && npm install --omit=dev 2>/dev/null
-
-if [ ! -f "$TARGET_DIR/.env" ]; then
-  cp "$SCRIPT_DIR/.env.example" "$TARGET_DIR/.env.atlassian.example"
-  echo "Created .env.atlassian.example — copy to .env and fill in credentials"
+# ─── Preflight checks ───────────────────────────
+if [ ! -d "$BMAD_DIR" ]; then
+  echo "ERROR: No _bmad/ directory found at $TARGET_DIR"
+  echo "This script requires BMAD v6.2.1+ to be installed."
+  exit 1
 fi
 
+if [ ! -f "$BMAD_DIR/_config/manifest.yaml" ]; then
+  echo "ERROR: No manifest.yaml found — BMAD installation may be incomplete."
+  exit 1
+fi
+
+echo "Installing bmad-atlassian-sync (ats module) into $TARGET_DIR..."
 echo ""
-echo "Done! Next steps:"
-echo "  1. Add atlassian_sync config to _bmad/bmm/config.yaml"
-echo "     See: $SCRIPT_DIR/bmad-integration/config/bmad-config-extension.yaml"
-echo "  2. Add Jira/Confluence credentials to .env"
-echo "     See: $TARGET_DIR/.env.atlassian.example"
+
+# ─── Copy module directory ────────────────────────
+echo "[1/2] Copying module files to _bmad/ats/..."
+if [ -d "$MODULE_DIR" ]; then
+  echo "  WARNING: _bmad/ats/ already exists — overwriting files"
+fi
+
+mkdir -p "$MODULE_DIR"
+cp -r "$SCRIPT_DIR/ats/"* "$MODULE_DIR/"
+echo "  OK"
+
+# ─── Run module install script ────────────────────
+echo "[2/2] Running module installer..."
+echo ""
+bash "$MODULE_DIR/install.sh"

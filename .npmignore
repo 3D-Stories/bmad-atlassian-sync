@@ -1,0 +1,13 @@
+# Development files — excluded from npm package
+src/
+tests/
+scripts/
+bmad-integration/
+node_modules/
+.git/
+.gitignore
+.env
+.rawgentic.json
+tsconfig.json
+vitest.config.*
+*.test.ts

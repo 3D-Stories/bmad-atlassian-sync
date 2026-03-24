@@ -1,0 +1,7 @@
+type: skill
+name: bmad-atlassian-sync
+displayName: Atlassian Sync
+description: "Bidirectional sync between BMAD .md artifacts and Jira Cloud / Confluence Cloud. Syncs stories, epics, and sprint status to Jira issues; publishes sprint pages, retrospectives, and change proposals to Confluence."
+module: ats
+canonicalId: bmad-atlassian-sync
+hasSidecar: false
