@@ -8,6 +8,7 @@
   },
   "files": [
     "ats/",
+    "src/",
     "dist/",
     "README.md",
     ".env.example"

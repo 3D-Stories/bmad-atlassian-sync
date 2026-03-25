@@ -32,8 +32,8 @@ fi
 echo "Installing bmad-atlassian-sync (ats module) into $TARGET_DIR..."
 echo ""
 
-# ─── Copy module directory ────────────────────────
-echo "[1/2] Copying module files to _bmad/ats/..."
+# ─── 1. Copy module files ─────────────────────────
+echo "[1/3] Copying module files to _bmad/ats/..."
 if [ -d "$MODULE_DIR" ]; then
   echo "  WARNING: _bmad/ats/ already exists — overwriting files"
 fi
@@ -42,7 +42,15 @@ mkdir -p "$MODULE_DIR"
 cp -r "$SCRIPT_DIR/ats/"* "$MODULE_DIR/"
 echo "  OK"
 
-# ─── Run module install script ────────────────────
-echo "[2/2] Running module installer..."
+# ─── 2. Copy CLI source into module ──────────────
+echo "[2/3] Copying CLI source to _bmad/ats/cli/..."
+mkdir -p "$MODULE_DIR/cli"
+cp -r "$SCRIPT_DIR/src/"* "$MODULE_DIR/cli/"
+cp "$SCRIPT_DIR/package.json" "$MODULE_DIR/cli/package.json"
+cp "$SCRIPT_DIR/tsconfig.json" "$MODULE_DIR/cli/tsconfig.json"
+echo "  OK"
+
+# ─── 3. Run module install script ─────────────────
+echo "[3/3] Running module installer..."
 echo ""
 bash "$MODULE_DIR/install.sh"

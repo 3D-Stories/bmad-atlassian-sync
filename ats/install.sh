@@ -17,13 +17,17 @@ MODULE_MANIFEST="$BMAD_DIR/_config/manifest.yaml"
 echo "Installing ats (Atlassian Sync) module..."
 echo ""
 
-# ─── 1. Install CLI dependencies ─────────────────
-echo "[1/5] Installing CLI dependencies..."
-if [ -f "$SCRIPT_DIR/cli/package.json" ]; then
-  (cd "$SCRIPT_DIR/cli" && npm install --omit=dev 2>/dev/null)
-  echo "  OK"
+# ─── 1. Install CLI ──────────────────────────────
+echo "[1/5] Setting up CLI..."
+CLI_DIR="$SCRIPT_DIR/cli"
+if [ -d "$CLI_DIR" ] && [ -f "$CLI_DIR/cli.ts" ]; then
+  # CLI was pre-copied (npm install or manual copy) — just install deps
+  (cd "$CLI_DIR" && npm install --omit=dev 2>/dev/null)
+  echo "  CLI deps installed"
 else
-  echo "  WARNING: cli/package.json not found — CLI may not work"
+  echo "  WARNING: cli/ directory not found in module."
+  echo "  The install-bmad.sh script should have copied src/ here."
+  echo "  Run: cp -r <repo>/src _bmad/ats/cli && cp <repo>/package.json _bmad/ats/cli/"
 fi
 
 # ─── 2. Register in skill manifest ───────────────
