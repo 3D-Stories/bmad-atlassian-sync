@@ -6,18 +6,19 @@ description: 'Sync Markdown artifacts with Jira and Confluence. Push stories/epi
 
 Bidirectional sync between local `.md` files and Jira Cloud / Confluence Cloud.
 
+**Zero external dependencies** — uses Python 3.8+ stdlib only.
+
 ## Prerequisites
 
-- Node.js 18+ installed
+- Python 3.8+ installed
 - `.env` file with Atlassian credentials (run `/atlassian-sync:configure` if not set up)
-- CLI deps installed at `${CLAUDE_PLUGIN_DATA}` (auto-installed on session start via hook)
 
-## CLI Location
+## CLI
 
-The CLI runs from the plugin directory:
+All commands use the Python CLI at `${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py`:
 
 ```
-npx --prefix "${CLAUDE_PLUGIN_DATA}" tsx "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" <command> [file] [options]
+python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" <service> <command> [args...]
 ```
 
 ## Initialization
@@ -25,67 +26,79 @@ npx --prefix "${CLAUDE_PLUGIN_DATA}" tsx "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" <com
 Before running any sync operation:
 
 1. Check if `.env` exists in the project root with required credentials:
-   - `ATLASSIAN_SA_EMAIL` or `JIRA_EMAIL`
-   - `ATLASSIAN_API_TOKEN` or `JIRA_API_TOKEN`
-   - `ATLASSIAN_SITE_URL` or `JIRA_BASE_URL`
+   - `ATLASSIAN_SA_EMAIL` and `ATLASSIAN_API_TOKEN`
+   - `ATLASSIAN_CLOUD_ID` and `ATLASSIAN_SITE_URL`
+   - `JIRA_PROJECT_KEY` and `CONFLUENCE_SPACE_KEY`
 2. If credentials are missing, tell the user: "Atlassian credentials not found. Run `/atlassian-sync:configure` to set up."
-3. Check if `${CLAUDE_PLUGIN_DATA}/node_modules` exists. If not, run: `cd "${CLAUDE_PLUGIN_DATA}" && cp "${CLAUDE_PLUGIN_ROOT}/package.json" . && npm install --omit=dev`
 
 ## Operations
 
-### Push to Jira
+### Push Story/Epic to Jira
 
-Push a local `.md` file to Jira (creates or updates an issue):
+To push a local `.md` file to Jira:
 
-```bash
-npx --prefix "${CLAUDE_PLUGIN_DATA}" tsx "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" push <file_path> [--type story|epic]
-```
-
-- If the file has a `jira_key` in frontmatter → updates the existing issue
-- If no `jira_key` → creates a new issue and writes `jira_key` back to frontmatter
-- Applies `bmad-sync` label to the issue
-- Maps local status to Jira transition (see Status Mappings below)
+1. Read the file's YAML frontmatter — check for `jira_key` field
+2. **If `jira_key` exists** (update):
+   - Read the file content (title from first `# heading`, description from body)
+   - Run: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira update <jira_key> summary="<title>"`
+3. **If `jira_key` is absent** (create):
+   - Run: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira create <PROJECT_KEY> <Story|Epic> "<title>" "<description>" --labels bmad-sync`
+   - Write the returned `jira_key` back to the file's frontmatter
+4. Transition the Jira issue to match the local status (see Status Mappings)
 
 ### Pull from Jira
 
-Pull latest Jira state into a local `.md` file:
+To pull latest Jira state into a local `.md` file:
 
-```bash
-npx --prefix "${CLAUDE_PLUGIN_DATA}" tsx "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" pull <file_path>
-```
-
-- Requires `jira_key` in the file's frontmatter
-- Compares timestamps — only updates if Jira is newer
-- Writes updated status, assignee, and timestamps to frontmatter
-
-### Bidirectional Sync
-
-Pull then push — resolves conflicts using the configured strategy:
-
-```bash
-npx --prefix "${CLAUDE_PLUGIN_DATA}" tsx "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" sync <file_path>
-```
+1. Read `jira_key` from the file's frontmatter (required)
+2. Run: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira get <jira_key>`
+3. Compare Jira status/assignee with local frontmatter
+4. Update frontmatter fields: `status`, `assignee`, `last_synced_at`
 
 ### Transition Status
 
-Transition a Jira issue to match the local status:
+1. Get available transitions: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira transitions <jira_key>`
+2. Find the transition ID matching the target status (see Status Mappings)
+3. **Never-downgrade rule**: if Jira is at a more advanced status, skip and warn
+4. Execute: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira transition <jira_key> <transition_id>`
 
-```bash
-npx --prefix "${CLAUDE_PLUGIN_DATA}" tsx "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" transition --jira-key <KEY> --status "<status>"
+### Search Jira
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira search "project = PROJ AND status = 'In Progress'"
 ```
 
-- Never-downgrade rule: if Jira is further along, the transition is skipped with a warning
-
-### Push Confluence Page
-
-Publish a Markdown artifact as a Confluence page:
+### Sprint Operations
 
 ```bash
-npx --prefix "${CLAUDE_PLUGIN_DATA}" tsx "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" push --type confluence <file_path>
+# List boards
+python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira boards PROJ
+
+# Create sprint
+python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira create-sprint <BOARD_ID> "Sprint Name" "Sprint goal"
+
+# Move issues to sprint
+python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira move-to-sprint <SPRINT_ID> PROJ-1 PROJ-2
 ```
 
-- Supports: sprint summaries, retrospectives, change proposals
-- Creates new page or updates existing (using `confluence_page_id` in frontmatter)
+### Publish Confluence Page
+
+1. Read the `.md` file content
+2. Convert Markdown to Confluence storage format (XHTML)
+3. Check frontmatter for `confluence_page_id`
+4. **If page exists** (update):
+   - Get current version: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" confluence get <page_id>`
+   - Write updated XHTML to a temp file
+   - Run: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" confluence create "<title>" <temp_file> --parent <parent_id>`
+5. **If no page** (create):
+   - Run: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" confluence create "<title>" <temp_file> --parent <parent_id>`
+   - Write returned `confluence_page_id` back to frontmatter
+
+### Add Comment to Jira Issue
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira comment <jira_key> "Comment text here"
+```
 
 ## Status Mappings
 
@@ -102,7 +115,7 @@ npx --prefix "${CLAUDE_PLUGIN_DATA}" tsx "${CLAUDE_PLUGIN_ROOT}/src/cli.ts" push
 
 ## Frontmatter Fields
 
-The CLI reads and writes these fields in `.md` frontmatter:
+The following fields are read/written in `.md` YAML frontmatter:
 
 | Field | Direction | Purpose |
 |---|---|---|
@@ -114,11 +127,6 @@ The CLI reads and writes these fields in `.md` frontmatter:
 
 ## Conflict Resolution
 
-Configure via `SYNC_CONFLICT_STRATEGY` env var or `atlassian-sync.yaml`:
+When local and Jira statuses differ, use the **never-downgrade** rule: status only moves forward. If Jira is ahead of local, update local. If local is ahead, push to Jira.
 
-| Strategy | Behavior |
-|---|---|
-| `merge` | Takes the more advanced status (default) |
-| `local-wins` | Always uses local status |
-| `remote-wins` | Always uses Jira status |
-| `ask` | Prompts user for input |
+For other fields (summary, description), ask the user which version to keep.

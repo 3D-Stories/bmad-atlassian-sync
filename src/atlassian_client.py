@@ -120,7 +120,7 @@ class AtlassianAPIError(Exception):
 
 
 def jira_api(method, path, body=None):
-    """Jira v3 REST API. Path should start with /, e.g. /issue/ITDT-940."""
+    """Jira v3 REST API. Path should start with /, e.g. /issue/PROJ-42."""
     url = f'https://api.atlassian.com/ex/jira/{_cloud_id()}/rest/api/3{path}'
     return _request(url, method, body)
 
@@ -201,7 +201,7 @@ def jira_create_issue(project_key, issue_type, summary, description_text=None,
 
     issue_type: 'Epic', 'Story', 'Task', 'Bug'
     description_text: plain text (converted to ADF automatically)
-    epic_key: parent epic key (e.g. 'ITDT-10') for stories
+    epic_key: parent epic key (e.g. 'PROJ-10') for stories
     labels: list of label strings
     """
     fields = {
@@ -292,7 +292,7 @@ def jira_create_sprint(board_id, name, goal=None, start_date=None, end_date=None
 
 
 def jira_move_to_sprint(sprint_id, issue_keys):
-    """Move issues into a sprint. issue_keys is a list of keys like ['ITDT-1', 'ITDT-2']."""
+    """Move issues into a sprint. issue_keys is a list of keys like ['PROJ-1', 'PROJ-2']."""
     return jira_agile_api('POST', f'/sprint/{sprint_id}/issue', {'issues': issue_keys})
 
 

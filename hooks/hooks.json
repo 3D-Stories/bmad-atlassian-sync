@@ -1,13 +1,3 @@
 {
-  "hooks": [
-    {
-      "event": "SessionStart",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "diff -q \"${CLAUDE_PLUGIN_ROOT}/package.json\" \"${CLAUDE_PLUGIN_DATA}/package.json\" >/dev/null 2>&1 || (cp \"${CLAUDE_PLUGIN_ROOT}/package.json\" \"${CLAUDE_PLUGIN_DATA}/\" && cp \"${CLAUDE_PLUGIN_ROOT}/tsconfig.json\" \"${CLAUDE_PLUGIN_DATA}/\" 2>/dev/null; cp -r \"${CLAUDE_PLUGIN_ROOT}/src\" \"${CLAUDE_PLUGIN_DATA}/\" && cd \"${CLAUDE_PLUGIN_DATA}\" && npm install --omit=dev 2>/dev/null && echo 'atlassian-sync: CLI deps installed' || echo 'atlassian-sync: CLI dep install failed')"
-        }
-      ]
-    }
-  ]
+  "hooks": []
 }
