@@ -11,12 +11,8 @@ import sys
 import json
 import os
 
-# Allow override of the scripts path via ATLASSIAN_SCRIPTS_PATH env var
-SCRIPTS_PATH = os.environ.get(
-    'ATLASSIAN_SCRIPTS_PATH',
-    '/home/candrosoff/claude/scripts'
-)
-sys.path.insert(0, SCRIPTS_PATH)
+# Import atlassian_client from the same directory as this script
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import atlassian_client as ac  # noqa: E402
 
