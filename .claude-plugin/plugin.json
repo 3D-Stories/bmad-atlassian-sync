@@ -1,0 +1,21 @@
+{
+  "name": "atlassian-sync",
+  "version": "0.1.0",
+  "description": "Bidirectional sync between Markdown artifacts and Jira/Confluence Cloud. Push stories and epics to Jira, pull status updates, publish Confluence pages — all from frontmatter-driven .md files.",
+  "author": {
+    "name": "STARS Air Ambulance",
+    "url": "https://github.com/3D-Stories"
+  },
+  "repository": "https://github.com/3D-Stories/bmad-atlassian-sync",
+  "license": "MIT",
+  "keywords": [
+    "jira",
+    "confluence",
+    "atlassian",
+    "sync",
+    "markdown",
+    "bmad"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}

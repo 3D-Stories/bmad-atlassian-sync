@@ -16,8 +16,9 @@ Bidirectional sync between [BMAD](https://github.com/bmad-method/bmad) `.md` art
 - **Pull Jira state** into local `.md` frontmatter (status, timestamps, remote changes)
 - **Bidirectional conflict resolution** — four strategies: `merge`, `local-wins`, `remote-wins`, `ask`
 - **Publish Confluence pages** — sprint summaries, retrospectives, and change proposals
+- **Claude Code plugin** — install once, use `/atlassian-sync:sync-jira` in any project
 - **BMAD workflow integration** — agent critical actions and menu entries hook into dev-story, sprint-planning, and more (v6.2.1+)
-- **Standalone CLI** — works without BMAD for any project with Markdown files
+- **Standalone CLI** — works without BMAD or Claude Code for any project with Markdown files
 - **Frontmatter-driven** — `jira_key`, `confluence_page_id`, `last_synced_at` written back to `.md` files automatically
 - **Status mapping** — BMAD statuses mapped to Jira transitions (never-downgrade enforced)
 - **No external YAML dependencies** — lightweight parsers with no runtime bloat
@@ -26,7 +27,30 @@ Bidirectional sync between [BMAD](https://github.com/bmad-method/bmad) `.md` art
 
 ## Installation
 
-### Option A: BMAD Module (recommended for teams)
+### Option A: Claude Code Plugin (recommended)
+
+Install as a Claude Code plugin — works with any project, no BMAD required.
+
+**Add the marketplace and install:**
+
+```bash
+claude plugin add https://github.com/3D-Stories/bmad-atlassian-sync.git
+claude plugin install atlassian-sync
+```
+
+**Or test locally during development:**
+
+```bash
+claude --plugin-dir ./path/to/bmad-atlassian-sync
+```
+
+Once installed, two skills are available:
+- `/atlassian-sync:configure` — set up credentials and project config
+- `/atlassian-sync:sync-jira` — push, pull, and sync operations
+
+CLI dependencies are auto-installed on first session via a SessionStart hook.
+
+### Option B: BMAD Module (for BMAD teams)
 
 Install as a BMAD external module. Requires BMAD v6.2.1+.
 
@@ -46,7 +70,7 @@ This copies the `ats/` module to `_bmad/ats/` in your project and runs the modul
 
 **Module code:** `ats` | **npm package:** `bmad-atlassian-sync`
 
-### Option B: Standalone CLI
+### Option C: Standalone CLI
 
 Install the CLI globally to `~/.local/share/atlassian-sync` with a wrapper in `~/.local/bin`:
 
@@ -62,7 +86,7 @@ Make sure `~/.local/bin` is in your `PATH`, then run:
 atlassian-sync --help
 ```
 
-### Option C: Run Directly from Source
+### Option D: Run Directly from Source
 
 ```bash
 git clone https://github.com/3D-Stories/bmad-atlassian-sync.git
