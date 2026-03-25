@@ -1,9 +1,0 @@
-{
-  "securityExceptions": [
-    {
-      "rule": "child_process_exec",
-      "pathPattern": "src/clients/atlassian-bridge.ts",
-      "reason": "Bridge pattern: shells out to a known, fixed Python script path. execSync is intentional here — the command is not user-controlled."
-    }
-  ]
-}
