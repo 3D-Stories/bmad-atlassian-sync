@@ -59,18 +59,31 @@ This tool authenticates via the Atlassian Cloud API (`api.atlassian.com`) using 
 
 ### Required API Token Scopes
 
-**Jira Platform:**
-- `read:jira-work`, `write:jira-work`, `read:jira-user`, `read:me`
+**Read:**
+- `read:jira-user`
+- `read:jira-work`
+- `read:me`
+- `read:account`
+- `read:board-scope.admin:jira-software`
+- `read:board-scope:jira-software`
+- `read:epic:jira-software`
+- `read:issue:jira-software`
+- `read:sprint:jira-software`
+- `read:confluence-content.all`
+- `read:confluence-content.summary`
+- `read:confluence-space.summary`
 
-**Jira Software:**
-- `read:board-scope:jira-software`, `read:board-scope.admin:jira-software`
-- `read:sprint:jira-software`, `write:sprint:jira-software`
-- `read:issue:jira-software`, `write:issue:jira-software`
-- `read:epic:jira-software`, `write:epic:jira-software`
-
-**Confluence:**
-- `read:confluence-content.all`, `read:confluence-space.summary`
-- `write:confluence-content`, `write:confluence-file`
+**Write:**
+- `write:board-scope:jira-software`
+- `write:board-scope.admin:jira-software`
+- `write:epic:jira-software`
+- `write:issue:jira-software`
+- `write:sprint:jira-software`
+- `write:confluence-content`
+- `write:confluence-file`
+- `write:confluence-props`
+- `write:content:confluence`
+- `write:content.property:confluence`
 
 ### Find Your Cloud ID
 
