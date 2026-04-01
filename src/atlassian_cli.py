@@ -14,9 +14,9 @@ Usage:
   python3 src/atlassian_cli.py jira move-to-sprint 42 PROJ-1 PROJ-2
 
   python3 src/atlassian_cli.py confluence get 123456
-  python3 src/atlassian_cli.py confluence find "Page Title" [--parent 123456]
-  python3 src/atlassian_cli.py confluence create "Page Title" body.html [--parent 123456]
-  python3 src/atlassian_cli.py confluence create "Page Title" - [--parent 123456]  # reads stdin
+  python3 src/atlassian_cli.py confluence find "Page Title" [--parent 123456] [--space DD]
+  python3 src/atlassian_cli.py confluence create "Page Title" body.html [--parent 123456] [--space DD]
+  python3 src/atlassian_cli.py confluence create "Page Title" - [--parent 123456] [--space DD]  # reads stdin
 
 Requires .env with: ATLASSIAN_SA_EMAIL, ATLASSIAN_API_TOKEN, ATLASSIAN_CLOUD_ID, ATLASSIAN_SITE_URL
 """
@@ -158,7 +158,16 @@ def cmd_confluence_get(args):
     print(f"Version: {page.get('version', {}).get('number', '?')}")
 
 
+def _extract_space_override(args):
+    """Extract --space flag from args and apply override if present."""
+    if '--space' in args:
+        idx = args.index('--space')
+        space_key = args[idx + 1]
+        ac.set_confluence_space(space_key)
+
+
 def cmd_confluence_find(args):
+    _extract_space_override(args)
     title = args[0]
     parent_id = None
     if '--parent' in args:
@@ -171,6 +180,7 @@ def cmd_confluence_find(args):
 
 
 def cmd_confluence_create(args):
+    _extract_space_override(args)
     title = args[0]
     body_source = args[1]
 
@@ -205,8 +215,8 @@ COMMANDS = {
     },
     'confluence': {
         'get':    (cmd_confluence_get, 1, 'confluence get <PAGE_ID>'),
-        'find':   (cmd_confluence_find, 1, 'confluence find "<title>" [--parent ID]'),
-        'create': (cmd_confluence_create, 2, 'confluence create "<title>" <body.html|-> [--parent ID]'),
+        'find':   (cmd_confluence_find, 1, 'confluence find "<title>" [--parent ID] [--space KEY]'),
+        'create': (cmd_confluence_create, 2, 'confluence create "<title>" <body.html|-> [--parent ID] [--space KEY]'),
     },
 }
 
@@ -234,8 +244,9 @@ def main():
 
     func, min_args, usage = COMMANDS[service][command]
 
-    # Filter out --parent and its value from positional arg count
-    positional = [a for i, a in enumerate(args) if a != '--parent' and (i == 0 or args[i-1] != '--parent')]
+    # Filter out --parent/--space and their values from positional arg count
+    skip_flags = {'--parent', '--space'}
+    positional = [a for i, a in enumerate(args) if a not in skip_flags and (i == 0 or args[i-1] not in skip_flags)]
     if len(positional) < min_args:
         print(f'Usage: {usage}')
         sys.exit(1)

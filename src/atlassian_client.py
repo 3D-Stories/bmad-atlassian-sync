@@ -43,6 +43,12 @@ CONFLUENCE_SPACE_KEY = os.environ.get('CONFLUENCE_SPACE_KEY', '')
 CONFLUENCE_SPACE_ID = os.environ.get('CONFLUENCE_SPACE_ID', '')
 CONFLUENCE_ROOT_PAGE_ID = os.environ.get('CONFLUENCE_ROOT_PAGE_ID', '')
 
+
+def set_confluence_space(space_key):
+    """Override the Confluence space key at runtime (e.g., from --space flag)."""
+    global CONFLUENCE_SPACE_KEY
+    CONFLUENCE_SPACE_KEY = space_key
+
 JIRA_PROJECT = os.environ.get('JIRA_PROJECT_KEY', '')
 
 # ─────────────────────────────────────────────────────────────────────
@@ -270,10 +276,26 @@ def jira_agile_api(method, path, body=None):
 
 
 def jira_get_boards(project_key=None):
-    """List Jira boards. Optionally filter by project key."""
+    """List Jira boards. Optionally filter by project key.
+
+    NOTE: Agile v1 API requires granular Jira Software scopes
+    (read:board-scope:jira-software, etc.) which may not be available
+    with all service account token types. If you get 401 "scope does not
+    match", check that your token has the Jira Software scopes listed in README.
+    """
     params = f'?projectKeyOrId={project_key}' if project_key else ''
-    result = jira_agile_api('GET', f'/board{params}')
-    return result.get('values', [])
+    try:
+        result = jira_agile_api('GET', f'/board{params}')
+        return result.get('values', [])
+    except AtlassianAPIError as e:
+        if e.status == 401 and 'scope' in e.body.lower():
+            raise AtlassianAPIError(
+                e.status, e.reason, e.url,
+                f'{e.body}\n\nHINT: The Agile v1 API requires Jira Software '
+                f'scopes (read:board-scope:jira-software). Your API token may '
+                f'lack these scopes. See README.md for the full required scopes list.'
+            ) from e
+        raise
 
 
 def jira_create_sprint(board_id, name, goal=None, start_date=None, end_date=None):

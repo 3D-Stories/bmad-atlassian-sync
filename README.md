@@ -74,6 +74,7 @@ This tool authenticates via the Atlassian Cloud API (`api.atlassian.com`) using 
 - `read:confluence-space.summary`
 
 **Write:**
+- `write:jira-work` *(classic scope — required for creating/updating issues via REST v3)*
 - `write:board-scope:jira-software`
 - `write:board-scope.admin:jira-software`
 - `write:epic:jira-software`
@@ -84,6 +85,8 @@ This tool authenticates via the Atlassian Cloud API (`api.atlassian.com`) using 
 - `write:confluence-props`
 - `write:content:confluence`
 - `write:content.property:confluence`
+
+> **Note:** The Agile v1 API (boards, sprints) requires the granular Jira Software scopes above. If you get `401 Unauthorized; scope does not match` on board/sprint operations, verify these scopes are on your token. The classic `write:jira-work` scope is also required alongside the granular scopes — they are not interchangeable.
 
 ### Find Your Cloud ID
 

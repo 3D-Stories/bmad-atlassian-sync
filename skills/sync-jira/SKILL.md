@@ -86,12 +86,13 @@ python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" jira move-to-sprint <SPRINT
 1. Read the `.md` file content
 2. Convert Markdown to Confluence storage format (XHTML)
 3. Check frontmatter for `confluence_page_id`
-4. **If page exists** (update):
+4. **Determine target space**: Use `--space KEY` to publish to a space other than the default (`CONFLUENCE_SPACE_KEY` in `.env`). If the user provides a Confluence URL, extract the space key from it (e.g., `https://site.atlassian.net/wiki/spaces/DD/...` → `--space DD`).
+5. **If page exists** (update):
    - Get current version: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" confluence get <page_id>`
    - Write updated XHTML to a temp file
-   - Run: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" confluence create "<title>" <temp_file> --parent <parent_id>`
-5. **If no page** (create):
-   - Run: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" confluence create "<title>" <temp_file> --parent <parent_id>`
+   - Run: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" confluence create "<title>" <temp_file> --parent <parent_id> [--space KEY]`
+6. **If no page** (create):
+   - Run: `python3 "${CLAUDE_PLUGIN_ROOT}/src/atlassian_cli.py" confluence create "<title>" <temp_file> --parent <parent_id> [--space KEY]`
    - Write returned `confluence_page_id` back to frontmatter
 
 ### Add Comment to Jira Issue
